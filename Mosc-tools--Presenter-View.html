@@ -101,6 +101,8 @@
   .pill.demo .dot { background: var(--warn); }
   .pill.bad { border-color: var(--danger); color: var(--danger); }
   .pill.bad .dot { background: var(--danger) !important; }
+  #dropHint { position: fixed; inset: 0; z-index: 90; display: none; align-items: center; justify-content: center; background: rgba(16, 16, 16, .72); color: #fff; font-size: 22px; font-weight: 600; letter-spacing: .02em; pointer-events: none; }
+  #dropHint.on { display: flex; }
   .pill.live .dot { background: var(--good); animation: live-dot 1.6s ease-in-out infinite; }
   @keyframes live-dot { 0%, 100% { box-shadow: 0 0 0 0 rgba(53, 218, 140, .55); } 60% { box-shadow: 0 0 0 5px rgba(53, 218, 140, 0); } }
   #btnSync { margin-right: 2px; }
@@ -439,7 +441,7 @@
     <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dSkip" checked /> Skip hidden slides</label></div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dCursor" /> Hide mouse cursor after 3 s idle</label></div>
     <div class="field" id="dFollowFields" style="border-top:1px solid var(--line);padding-top:12px;margin-top:4px">
-      <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dFollow" checked /> Follow the live show</label>
+      <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dFollow" /> Follow the live show (optional)</label>
       <div style="font-size:12px;color:var(--dim);margin:4px 0 8px 28px;line-height:1.45">The <b>Presenter View Follow</b> Chrome extension on the playback laptop reports the slide on screen through the bridge. This view then moves only when the show moves — builds and animations no longer count as slides.</div>
       <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400;margin-left:28px"><input type="checkbox" id="dFollowKeys" /> Still let arrow keys / clicker move this view while following</label>
       <div style="font-size:12px;color:var(--dim);margin:4px 0 0 56px;line-height:1.45">Leave off when one clicker (Perfect Cue etc.) hits both laptops, or builds will push this view ahead. Number + Enter, Home/End and the grid always work.</div>
@@ -452,6 +454,17 @@
     </div>
   </form>
   <div class="kv" id="kv"></div>
+  <div class="kv" id="buildsBox" style="border-top:0;margin-top:8px;padding-top:0"><b>Build steps (click animations)</b>
+    <div id="buildsLine" style="margin:4px 0 8px">—</div>
+    <div id="buildsDrop" style="border:1.5px dashed var(--border);border-radius:10px;padding:14px 16px;text-align:center;color:var(--dim);font-size:13px;line-height:1.5;cursor:pointer">
+      Google's API renders each slide fully built and hides its animations, so this view reads them from the deck's <b>PowerPoint export</b>.<br>
+      <b>1.</b> <a href="#" id="btnPptx" style="color:var(--accent)">Download the .pptx from Google</a> (opens in a new tab, uses your Google login) &nbsp;
+      <b>2.</b> drop the file anywhere on this page, or <a href="#" id="btnPickPptx" style="color:var(--accent)">choose it</a>.<br>
+      Only the animation timing is read; the file never leaves this machine. Slides with N clicks become 7, 7A … 7N, so one clicker stays in step with the show.
+    </div>
+    <input type="file" id="pptxFile" accept=".pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation" style="display:none">
+    <button class="btn" type="button" id="btnForgetBuilds" style="font-size:12px;padding:6px 12px;margin-top:8px;background:transparent;color:var(--fg);border:1px solid var(--border)">Forget imported builds</button>
+  </div>
   <div class="kv" style="border-top:0;margin-top:8px;padding-top:0"><b>Problems this session</b> <span style="color:var(--dim)">(never shown on screen during a show — the Slides pill just turns red)</span>
     <div id="errLog"></div>
     <button class="btn" type="button" id="btnClearLog" style="font-size:12px;padding:6px 12px;margin-top:8px;background:transparent;color:var(--fg);border:1px solid var(--border)">Clear log</button>
@@ -463,6 +476,7 @@
   </div>
 </aside>
 
+<div id="dropHint">Drop the .pptx to read its build steps</div>
 <div id="toast"></div>
 
 <script>
@@ -493,7 +507,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.6.0';
+  const BUILD = '1.7.0';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -573,7 +587,7 @@
     $notes.appendChild(frag);
   }
 
-  const DEFAULTS = { slides: '', ontime: '', mode: 'bridge', bridge: '', token: '', key: '', timer: 'main', skip: true, cursor: false, follow: true, followKeys: false };
+  const DEFAULTS = { slides: '', ontime: '', mode: 'bridge', bridge: '', token: '', key: '', timer: 'main', skip: true, cursor: false, follow: false, followKeys: false };
   let cfg = { ...DEFAULTS };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); } catch { /* ignore */ }
   for (const k of ['slides', 'ontime', 'bridge', 'token', 'key', 'timer']) if (params.get(k)) cfg[k] = params.get(k);
@@ -758,12 +772,12 @@
     }
     return n;
   }
-  function cachedCount() { let n = 0; for (const s of deck.slides) { const t = deck.thumbs.get(s.id); if (t?.local && !t.stale) n++; } return n; }
+  function cachedCount() { let n = 0; for (const s of (deck.raw || deck.slides)) { const t = deck.thumbs.get(s.id); if (t?.local && !t.stale) n++; } return n; }
   function updateSlidesPill() {
     if (DEMO) { setPill($pillSlides, $pillSlidesText, 'Demo deck', 'demo'); return; }
-    const total = deck.slides.length, have = cachedCount();
+    const total = (deck.raw || deck.slides).length, have = cachedCount();
     if (total && have < total && (deck.queue.length || deck.busy || deck.pumpSoon)) setPill($pillSlides, $pillSlidesText, `Caching slides ${have}/${total}`, 'busy');
-    else { const real = deck.realCount || total; setPill($pillSlides, $pillSlidesText, `Slides · ${real}` + (real < total ? ` · ${total - real} builds` : '') + (live.active ? ' · LIVE' : ''), live.active ? 'ok live' : 'ok'); }
+    else { const real = deck.realCount || total, builds = deck.slides.length - real; setPill($pillSlides, $pillSlidesText, `Slides · ${real}` + (builds > 0 ? ` · ${builds} build${builds === 1 ? '' : 's'}` : '') + (live.active ? ' · LIVE' : ''), live.active ? 'ok live' : 'ok'); }
   }
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -911,7 +925,7 @@
   function labelSlides() {
     let num = 0, step = 0, base = null;
     for (const s of deck.slides) {
-      s.build = num > 0 && isBuildTag(s.notes);
+      s.build = s.virt || (num > 0 && isBuildTag(s.notes));
       if (s.build) { step++; s.num = num; s.label = num + (step <= 26 ? String.fromCharCode(64 + step) : String(step)); s.base = base; }
       else { num++; step = 0; base = s; s.num = num; s.label = String(num); s.base = null; }
     }
@@ -926,6 +940,141 @@
     deck.pos = Math.max(0, Math.min(deck.pos, deck.order.length - 1));
   }
 
+  /* ---------- Build steps from the deck's PPTX export ----------
+     The Slides API has no animation data at all; the PowerPoint export does (standard <p:timing> XML). Each
+     click-triggered effect group is one press of the clicker, so a slide with N of them becomes N+1 steps:
+     7, 7A … 7N. The pptx is read here in the browser (it can be hundreds of MB with video — only the tiny
+     slide XML parts are inflated) and the counts are kept in localStorage per deck + revision. */
+  const buildsKey = () => 'moscBuilds|' + (deck.id || '');
+  function loadBuilds() { try { return JSON.parse(localStorage.getItem(buildsKey()) || 'null'); } catch { return null; } }
+  function saveBuilds(b) { try { if (b) localStorage.setItem(buildsKey(), JSON.stringify(b)); else localStorage.removeItem(buildsKey()); } catch { /* quota */ } }
+  function expandSlides(raw) {
+    deck.builds = DEMO ? null : loadBuilds();
+    deck.buildsNote = '';
+    const b = deck.builds;
+    if (!b || !raw.length) return raw.slice();
+    const sameOrder = b.slideIds && b.slideIds.length === raw.length && b.slideIds.every((id, i) => id === raw[i].id);
+    let countFor;
+    if (sameOrder) countFor = (s, i) => b.counts[i] || 0;
+    else {
+      // Deck was edited since the import. Match by slide id where we can, so unchanged slides keep their steps.
+      const byId = {}; (b.slideIds || []).forEach((id, i) => { byId[id] = b.counts[i] || 0; });
+      countFor = (s) => byId[s.id] || 0;
+      deck.buildsNote = b.slideIds ? 'deck edited since the import — matched by slide, re-import to be sure' : 'imported before this deck was loaded';
+    }
+    if (b.revisionId && deck.revisionId && b.revisionId !== deck.revisionId && !deck.buildsNote) deck.buildsNote = 'deck saved since the import (same slide order) — re-import if animations changed';
+    const out = [];
+    raw.forEach((s, i) => {
+      out.push(s);
+      const n = Math.min(countFor(s, i), 60);
+      for (let k = 1; k <= n; k++) out.push({ ...s, virt: true, step: k, steps: n });
+    });
+    return out;
+  }
+  function applyBuilds() {
+    const label = deck.order.length ? deck.slides[deck.order[deck.pos]]?.label : null;
+    deck.slides = expandSlides(deck.raw || deck.slides.filter(s => !s.virt));
+    rebuildOrder();
+    if (label) { let p = deck.order.findIndex(i => deck.slides[i].label === label); if (p < 0) p = deck.order.findIndex(i => deck.slides[i].label === label.replace(/[A-Z]+$/, '')); if (p >= 0) deck.pos = p; }
+    render(); buildGrid(); updateSlidesPill(); updateBuildsLine();
+  }
+  function updateBuildsLine() {
+    const el = $('buildsLine'); if (!el) return;
+    const b = deck.builds;
+    if (!b) { el.innerHTML = '<span style="color:var(--dim)">No build steps imported — every slide counts as one clicker press.</span>'; return; }
+    const slidesWith = b.counts.filter(Boolean).length, total = b.counts.reduce((a, c) => a + c, 0);
+    el.innerHTML = `<b>${total}</b> click-build${total === 1 ? '' : 's'} on <b>${slidesWith}</b> slide${slidesWith === 1 ? '' : 's'} · from <i>${(b.name || 'pptx').replace(/[<>&]/g, '')}</i> at ${new Date(b.at).toLocaleString()} (${b.slides} slides in the file)` +
+      (deck.buildsNote ? `<br><span style="color:var(--warn)">⚠ ${deck.buildsNote}</span>` : (deck.raw && b.slides !== deck.raw.length ? `<br><span style="color:var(--warn)">⚠ file has ${b.slides} slides, deck has ${deck.raw.length}</span>` : ''));
+  }
+
+  // Minimal ZIP reader: central directory + DecompressionStream, so a 300 MB pptx costs a few slice() reads.
+  async function zipEntries(file) {
+    const tailLen = Math.min(file.size, 1024 * 1024);
+    const tail = new DataView(await file.slice(file.size - tailLen).arrayBuffer());
+    let eocd = -1;
+    for (let i = tail.byteLength - 22; i >= 0; i--) { if (tail.getUint32(i, true) === 0x06054b50) { eocd = i; break; } }
+    if (eocd < 0) throw new Error('not a zip / pptx file');
+    let count = tail.getUint16(eocd + 10, true), cdSize = tail.getUint32(eocd + 12, true), cdOff = tail.getUint32(eocd + 16, true);
+    if (count === 0xffff || cdOff === 0xffffffff) {      // zip64
+      let loc = -1; for (let i = eocd - 20; i >= 0; i--) { if (tail.getUint32(i, true) === 0x07064b50) { loc = i; break; } }
+      if (loc < 0) throw new Error('zip64 without locator');
+      const z64off = Number(tail.getBigUint64(loc + 8, true));
+      const z = new DataView(await file.slice(z64off, z64off + 56).arrayBuffer());
+      count = Number(z.getBigUint64(32, true)); cdSize = Number(z.getBigUint64(40, true)); cdOff = Number(z.getBigUint64(48, true));
+    }
+    const cd = new DataView(await file.slice(cdOff, cdOff + cdSize).arrayBuffer());
+    const td = new TextDecoder(); const entries = new Map(); let p = 0;
+    for (let n = 0; n < count && p + 46 <= cd.byteLength; n++) {
+      if (cd.getUint32(p, true) !== 0x02014b50) break;
+      const method = cd.getUint16(p + 10, true), csize = cd.getUint32(p + 20, true), usize = cd.getUint32(p + 24, true);
+      const nlen = cd.getUint16(p + 28, true), xlen = cd.getUint16(p + 30, true), clen = cd.getUint16(p + 32, true);
+      let off = cd.getUint32(p + 42, true);
+      const name = td.decode(new Uint8Array(cd.buffer, cd.byteOffset + p + 46, nlen));
+      if (off === 0xffffffff) {                            // zip64 extra field
+        let q = p + 46 + nlen; const end = q + xlen;
+        while (q + 4 <= end) { const id = cd.getUint16(q, true), sz = cd.getUint16(q + 2, true); if (id === 1) { let r = q + 4; if (usize === 0xffffffff) r += 8; if (csize === 0xffffffff) r += 8; off = Number(cd.getBigUint64(r, true)); } q += 4 + sz; }
+      }
+      entries.set(name, { method, csize, usize, off });
+      p += 46 + nlen + xlen + clen;
+    }
+    return entries;
+  }
+  async function zipRead(file, e) {
+    const lh = new DataView(await file.slice(e.off, e.off + 30).arrayBuffer());
+    if (lh.getUint32(0, true) !== 0x04034b50) throw new Error('bad local header');
+    const start = e.off + 30 + lh.getUint16(26, true) + lh.getUint16(28, true);
+    const blob = file.slice(start, start + e.csize);
+    if (e.method === 0) return await blob.text();
+    if (e.method !== 8) throw new Error('unsupported compression ' + e.method);
+    if (typeof DecompressionStream === 'undefined') throw new Error('this browser cannot inflate zip data (needs Chrome 103+ / Safari 16.4+)');
+    return await new Response(blob.stream().pipeThrough(new DecompressionStream('deflate-raw'))).text();
+  }
+  const xmlAttr = (tag, name) => { const m = tag.match(new RegExp('\\b' + name + '="([^"]*)"')); return m ? m[1] : null; };
+  async function readPptxBuilds(file) {
+    const entries = await zipEntries(file);
+    const pres = entries.get('ppt/presentation.xml'), rels = entries.get('ppt/_rels/presentation.xml.rels');
+    if (!pres || !rels) throw new Error('no ppt/presentation.xml inside — is this a .pptx?');
+    const relMap = {};
+    for (const tag of (await zipRead(file, rels)).match(/<Relationship\b[^>]*\/?>/g) || []) { const id = xmlAttr(tag, 'Id'), t = xmlAttr(tag, 'Target'); if (id && t) relMap[id] = t; }
+    const order = [];
+    for (const tag of (await zipRead(file, pres)).match(/<p:sldId\b[^>]*\/?>/g) || []) { const rid = xmlAttr(tag, 'r:id'); if (rid) order.push(rid); }
+    const counts = [];
+    for (const rid of order) {
+      const target = (relMap[rid] || '').replace(/^\//, '').replace(/^ppt\//, '');
+      const e = entries.get('ppt/' + target);
+      if (!e) { counts.push(0); continue; }
+      const xml = await zipRead(file, e);
+      counts.push(xml.includes('<p:timing') ? (xml.match(/nodeType="clickEffect"/g) || []).length : 0);
+    }
+    return { counts, slides: order.length };
+  }
+  async function importPptx(file) {
+    if (DEMO) { toast('Demo mode — load a real deck first', true); return; }
+    if (!deck.raw || !deck.raw.length) { toast('Wait for the deck to load, then drop the file again', true); return; }
+    toast('Reading build steps from ' + file.name + '…');
+    try {
+      const r = await readPptxBuilds(file);
+      if (r.slides !== deck.raw.length) logErr('Builds', `pptx has ${r.slides} slides, the Google deck has ${deck.raw.length} — steps matched by position, check the grid`);
+      deck.builds = { counts: r.counts.slice(0, deck.raw.length), slides: r.slides, slideIds: deck.raw.map(s => s.id), revisionId: deck.revisionId || null, at: Date.now(), name: file.name };
+      saveBuilds(deck.builds);
+      applyBuilds();
+      const total = deck.builds.counts.reduce((a, c) => a + c, 0), n = deck.builds.counts.filter(Boolean).length;
+      toast(total ? `${total} build step${total === 1 ? '' : 's'} on ${n} slide${n === 1 ? '' : 's'} — numbered 7A, 7B…` : 'No click animations found in that file');
+    } catch (err) { logErr('Builds', err.message || String(err)); toast('Could not read that file — see Settings', true); }
+  }
+  function pptxExportUrl() { return deck.id ? `https://docs.google.com/presentation/d/${deck.id}/export/pptx` : null; }
+  // Drag & drop anywhere; the file input in Settings for machines without a second window.
+  let dragDepth = 0;
+  document.addEventListener('dragenter', (e) => { if ([...(e.dataTransfer?.types || [])].includes('Files')) { dragDepth++; $('dropHint').classList.add('on'); } });
+  document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('dropHint').classList.remove('on'); } });
+  document.addEventListener('dragover', (e) => { e.preventDefault(); });
+  document.addEventListener('drop', (e) => { e.preventDefault(); dragDepth = 0; $('dropHint').classList.remove('on'); const f = e.dataTransfer?.files?.[0]; if (f) importPptx(f); });
+  $('btnPptx').addEventListener('click', (e) => { e.preventDefault(); const u = pptxExportUrl(); if (u) window.open(u, '_blank', 'noopener'); else toast('No deck loaded', true); });
+  $('btnPickPptx').addEventListener('click', (e) => { e.preventDefault(); $('pptxFile').click(); });
+  $('buildsDrop').addEventListener('click', (e) => { if (e.target.tagName !== 'A') $('pptxFile').click(); });
+  $('pptxFile').addEventListener('change', () => { const f = $('pptxFile').files?.[0]; if (f) importPptx(f); $('pptxFile').value = ''; });
+  $('btnForgetBuilds').addEventListener('click', () => { saveBuilds(null); deck.builds = null; applyBuilds(); toast('Imported builds forgotten'); });
+
   let deckTimer = null, deckInFlight = false, deckFails = 0;
   async function loadDeck(isRefresh) {
     if (deckInFlight) return;                       // never stack requests on a slow bridge — that is how Apps Script runs out of execution slots
@@ -935,11 +1084,12 @@
       const meta = await fetchDeckMeta();
       deckFails = 0; deck.lastMeta = { via: meta.via, fastError: meta.fastError, ms: meta.ms };
       const changed = deck.revisionId && meta.revisionId && meta.revisionId !== deck.revisionId;
-      const currentId = deck.order.length ? deck.slides[deck.order[deck.pos]]?.id : null;
-      deck.title = meta.title; deck.slides = meta.slides; deck.ar = meta.ar; deck.revisionId = meta.revisionId; $curSlide.classList.remove('err');
+      const currentLabel = deck.order.length ? deck.slides[deck.order[deck.pos]]?.label : null;
+      deck.title = meta.title; deck.raw = meta.slides; deck.ar = meta.ar; deck.revisionId = meta.revisionId; $curSlide.classList.remove('err');
+      deck.slides = expandSlides(deck.raw);
       document.documentElement.style.setProperty('--ar', String(deck.ar));
       rebuildOrder();
-      if (currentId) { const p = deck.order.findIndex(i => deck.slides[i].id === currentId); if (p >= 0) deck.pos = p; }
+      if (currentLabel) { const p = deck.order.findIndex(i => deck.slides[i].label === currentLabel); if (p >= 0) deck.pos = p; }
       const newKey = DEMO ? null : `${deck.id}|${meta.revisionId || 'norev'}|`;
       if (changed) {
         markThumbsStale();
@@ -1170,10 +1320,12 @@
   function updateGridThumbs(ids) {
     for (const id of ids) {
       const t = deck.thumbs.get(id); if (!t) continue;
-      const cell = $('gridList').querySelector(`[data-id="${id}"]`); if (!cell || cell.querySelector('img')) continue;
-      const img = document.createElement('img'); img.src = t.url; img.alt = '';
-      cell.insertBefore(img, cell.querySelector('.n'));
-      cell.querySelector('.ph')?.remove();
+      for (const cell of $('gridList').querySelectorAll(`[data-id="${id}"]`)) {
+        if (cell.querySelector('img')) continue;
+        const img = document.createElement('img'); img.src = t.url; img.alt = '';
+        cell.insertBefore(img, cell.querySelector('.n'));
+        cell.querySelector('.ph')?.remove();
+      }
     }
   }
   function markGridCurrent() {
@@ -1581,13 +1733,13 @@
     const el = $('kvCache'); if (!el) return;
     if (DEMO || !deck.cacheKey) { el.textContent = 'off'; return; }
     const st = await cacheStats(deck.cacheKey);
-    const have = cachedCount(), total = deck.slides.length;
+    const have = cachedCount(), total = (deck.raw || deck.slides).length;
     el.textContent = `${have} of ${total} slides stored locally` + (st ? ` (${(st.bytes / 1048576).toFixed(1)} MB on disk)` : ' (IndexedDB unavailable — images expire after 30 min)');
   }
   function updateKv() {
     const l = normalizeOntime(cfg.ontime);
-    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' + (deck.bridge ? ` v${deck.bridge.version}${deck.bridge.slidesApi === false ? ' · Slides API service NOT enabled' : ''}` : '') : 'API key'}<br><b>Notes formatting:</b> ${DEMO ? 'demo' : !deck.slides.length ? 'deck not loaded yet' : !deck.slides.some(s => s.notesEls || s.rich) ? 'plain text only — bridge needs Code.gs v3 and a new deployment version' : `received from Google · ${deck.slides.filter(slideHasStyle).length} of ${deck.slides.length} slides have styled notes`}<br><b>Slide cache:</b> <span id="kvCache">…</span><br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
-    updateCacheLine();
+    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' + (deck.bridge ? ` v${deck.bridge.version}${deck.bridge.slidesApi === false ? ' · Slides API service NOT enabled' : ''}` : '') : 'API key'}<br><b>Notes formatting:</b> ${DEMO ? 'demo' : !deck.slides.length ? 'deck not loaded yet' : !deck.slides.some(s => s.notesEls || s.rich) ? 'plain text only — bridge needs Code.gs v3 and a new deployment version' : `received from Google · ${(deck.raw || deck.slides).filter(slideHasStyle).length} of ${(deck.raw || deck.slides).length} slides have styled notes`}<br><b>Slide cache:</b> <span id="kvCache">…</span><br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
+    updateCacheLine(); updateBuildsLine();
   }
 
   /* ---------- Boot ---------- */

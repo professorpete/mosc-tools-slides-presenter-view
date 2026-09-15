@@ -76,7 +76,7 @@ the **Google Slides API** enabled and pick *API key* on the setup screen. It can
 
 Google does not expose "which slide is on screen right now" — not in the Slides API, not in Apps Script. Two ways to stay together:
 
-### Follow mode (recommended — behaves like Google's own speaker view)
+### Follow mode (optional — off by default)
 
 A tiny Chrome extension on the **playback laptop** watches the presenting tab. Google writes the current slide ID into that tab's URL,
 and it changes only on a real slide change — never on a build/animation click. The extension sends that ID to your bridge, and the
@@ -90,8 +90,10 @@ Setup (once):
 2. **Extension** (playback laptop, Chrome/Edge/Brave): unzip `extension/`, open `chrome://extensions`, turn on *Developer mode*,
    *Load unpacked*, pick the folder. Click its toolbar icon and paste the same bridge URL and token the presenter uses. Pin it if you
    want to see the "sent ✓" status.
-3. **Presenter view**: Settings → *Follow the live show* is on by default in bridge mode. The Slides pill shows **LIVE** once the
-   first slide arrives.
+3. **Presenter view**: Settings → tick *Follow the live show*. The Slides pill shows **LIVE** once the first slide arrives.
+
+Latency is roughly a second, which is too slow for a tight caller — the build-step import above is the better fix for a shared
+clicker. Follow mode remains for setups where the presenter is only watching.
 
 While following, arrow keys / space / PageUp-Down on the presenter machine are ignored on purpose (a whisper "following live"
 appears bottom-centre). That matters when a single clicker such as a Perfect Cue fires both laptops: builds consume presses on the
@@ -155,7 +157,21 @@ Mosc-tools--Presenter-View.html?slides=<link or id>&ontime=10.1.1.100:4001&bridg
 
 ## Slides with click-builds (animations)
 
-The Slides API renders each slide as a single image with every animation already played, and it has no notion of build steps, so a slide with four clicks shows as its finished state. Workaround: duplicate the slide once per step in Google Slides (delete the objects that haven't appeared yet on the earlier copies, remove the animations), and write `[build]` anywhere in the speaker notes of each continuation copy. The presenter then shows them as **7, 7A, 7B, 7C** and the following real slide is still **8**; the total, the grid, the Next card and the hash all use those labels. If a continuation copy's notes contain only `[build]`, it shows the base slide's notes. Jump with `7B` + Enter.
+The Slides API renders each slide as one image with every animation already played and exposes no animation data at all, so on
+its own this view would count a slide with four clicks as one press — and a clicker that fires both laptops (Perfect Cue) drifts.
+The animation timing does exist in the deck's **PowerPoint export**, so the presenter reads it from there:
+
+1. Settings → *Build steps* → **Download the .pptx from Google** (opens Google's export in a new tab using your login; works for any
+   deck size — a 335 MB deck with video is fine).
+2. Drop the downloaded file anywhere on the presenter page (or *choose it* in Settings). Only the tiny slide-timing XML is inflated,
+   so even a 300 MB file imports in well under a second; nothing is uploaded anywhere.
+
+A slide with N click-triggered effects then shows as **7, 7A … 7N**; the next real slide is still **8**; total, grid, Next card and
+URL hash all use those labels; the notes stay on 7's notes throughout. "After previous" / "with previous" effects need no press and
+are not counted. The result is stored per deck in the browser and survives reloads. If the deck is edited afterwards the Settings
+line warns you and steps are matched by slide ID; re-import after changing animations. **Forget imported builds** removes them.
+
+Manual override still works: add `[build]` to the speaker notes of a duplicated slide to make it a step by hand.
 
 ## Slide images and the local cache
 
@@ -208,6 +224,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.7.0** — build steps read from the deck's PPTX export (Settings → Build steps: download from Google, drop the file on the page). Counts click-triggered effects per slide from the `<p:timing>` XML with a built-in zip reader (DecompressionStream, slices only — 339 MB file in ~0.1 s), expands slides into 7, 7A… virtually (same image and notes), stores per deck + revision in localStorage, warns and matches by slide ID after edits, *Forget imported builds*. Pill counts builds; cache/notes counters use real slides. Follow mode now off by default.
 - **1.6.0** — follow the live show. New `extension/` (Chrome, load unpacked on the playback laptop) reports the on-screen slide to the bridge; bridge v5 adds `setCurrent` / long-poll `current` (CacheService only). Presenter: *Follow the live show* setting (default on in bridge mode), LIVE pill, arrows/clicker ignored while following unless allowed, unknown slide → deck refresh, other-deck guard, old-bridge notice. Fixes drift when one clicker (Perfect Cue) fires both laptops and builds eat presses on the show machine.
 - **1.5.0** — build steps. Google's API renders each slide as one flat image with every animation already played, so click-builds can't be shown. Duplicate the slide once per step instead, and put `[build]` in the speaker notes of each continuation slide: the presenter numbers them 7, 7A, 7B… and the next real slide stays 8 (the total counts real slides only). A continuation slide whose notes contain only `[build]` shows the base slide's notes. Type `7B` + Enter (or `#7B` in the URL) to jump to a step; the grid and Next card show the same labels. Slides pill reads e.g. "Slides · 24 · 3 builds".
 - **1.4.2** — overtime timer no longer blinks to black: it pulses gently between red and light red while counting up.
