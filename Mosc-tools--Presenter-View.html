@@ -472,7 +472,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.3.2';
+  const BUILD = '1.3.3';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -641,10 +641,26 @@
     return u.toString();
   }
 
+  const callLog = [];                                    // timestamps of bridge/API calls, for the Test report
   async function getJson(url, timeoutMs) {
+    // Google's web-app front door sometimes answers a burst of requests with its "Sorry, unable to open the file" page
+    // (HTTP 404/429/5xx) instead of running the script. Those are transient — retry twice before giving up.
+    let lastErr;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { return await getJsonOnce(url, timeoutMs); }
+      catch (e) {
+        lastErr = e;
+        if (!e.transient || attempt === 2) throw e;
+        await new Promise(r => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
+    throw lastErr;
+  }
+  async function getJsonOnce(url, timeoutMs) {
     const ctrl = new AbortController();
     const ms = timeoutMs || 25_000;
     const t = setTimeout(() => ctrl.abort(), ms);
+    callLog.push(Date.now()); while (callLog.length && callLog[0] < Date.now() - 300_000) callLog.shift();
     try {
       let r;
       try {
@@ -654,7 +670,11 @@
         throw new Error((cfg.mode === 'bridge' ? 'Could not reach the bridge' : 'Could not reach Google') + ' — ' + (e?.message || e) + '. Check the URL, your internet connection, and that the deployment is set to "Anyone".');
       }
       const text = await r.text();
-      let j; try { j = JSON.parse(text); } catch { throw new Error(r.ok ? 'Unexpected response (not JSON). If this is the bridge, redeploy it with access set to "Anyone".' : `HTTP ${r.status}`); }
+      let j; try { j = JSON.parse(text); } catch {
+        const err = new Error(r.ok ? 'Unexpected response (not JSON). If this is the bridge, redeploy it with access set to "Anyone".' : `HTTP ${r.status}`);
+        err.transient = !r.ok && (r.status === 404 || r.status === 429 || r.status >= 500);
+        throw err;
+      }
       if (!r.ok) throw new Error(j?.error?.message || j?.error || `HTTP ${r.status}`);
       if (j && j.ok === false) throw new Error(j.error || 'Bridge error');
       return j;
@@ -769,18 +789,24 @@
     put(`Mode: ${DEMO ? 'demo' : cfg.mode}${cfg.mode === 'bridge' ? '  Bridge: ' + (cfg.bridge || '').replace(/\/macros\/s\/[^/]+/, '/macros/s/…') : ''}`);
     if (DEMO) { put('Demo mode — nothing to test.'); return; }
     if (cfg.mode === 'bridge') {
-      const t0 = performance.now();
+      put(`Bridge calls from this tab in the last 5 min: ${callLog.length}`);
+      let p = null, pingErr = null;
+      for (let i = 1; i <= 3 && !p; i++) {
+        const t0 = performance.now();
+        try { p = await getJsonOnce(bridgeUrl('ping'), 30_000); put(`Ping ${i}: OK in ${Math.round(performance.now() - t0)} ms`); }
+        catch (e) { pingErr = e; put(`Ping ${i}: FAILED after ${Math.round(performance.now() - t0)} ms — ${e.message}`); if (i < 3) await new Promise(r => setTimeout(r, 2000)); }
+      }
       try {
-        const p = await getJson(bridgeUrl('ping'), 45_000);
+        if (!p) throw pingErr;
         deck.bridge = p;
-        put(`Ping: OK in ${Math.round(performance.now() - t0)} ms — bridge v${p.version || 1}, runs as ${p.user || '?'}, Slides API service ${p.slidesApi === false ? 'NOT enabled (slow fallback in use)' : 'enabled'}`);
+        put(`Bridge v${p.version || 1}, runs as ${p.user || '?'}, Slides API service ${p.slidesApi === false ? 'NOT enabled (slow fallback in use)' : 'enabled'}`);
         if (p.authorized === false) put('→ The script is NOT authorized yet. In the Apps Script editor pick `test` in the function dropdown → Run → Review permissions → Allow. Until then every deck request returns Google\'s "Sorry" page.');
         if ((p.version || 1) < 3) put('→ The deployed bridge is older than v3. Paste the current Code.gs, then Deploy → Manage deployments → ✎ → New version → Deploy.');
       } catch (e) {
         put(`Ping: FAILED — ${e.message}`);
         if (/404/.test(e.message)) put('→ HTTP 404 with a correct token (Google\'s "Sorry, unable to open the file" page) means the script has never been authorized: open the Apps Script project this deployment came from, pick `test` in the function dropdown → Run → Review permissions → Allow, then reload here. A wrong token would say "Bad token" instead.');
         put('→ A ping does no work, so a hang here means the script is out of execution slots (earlier deck requests still running) or the deployment is not "Anyone". Close every presenter tab for 6 minutes, then in the Apps Script editor open Executions (clock icon, left sidebar) to see what is running or failing.');
-        return;
+        put('Continuing with the deck test anyway…');
       }
     }
     const t1 = performance.now();
@@ -835,7 +861,8 @@
   async function pumpThumbs() {
     if (deck.busy || !deck.queue.length) return;
     deck.busy = true;
-    const batch = deck.queue.splice(0, cfg.mode === 'key' ? 3 : 4);
+    const batch = deck.queue.splice(0, cfg.mode === 'key' ? 3 : 6);
+    deck.batches = (deck.batches || 0) + 1;
     batch.forEach(id => deck.pending.add(id));
     try {
       const res = await fetchThumbs(batch);
@@ -844,11 +871,12 @@
       render(true); updateGridThumbs(batch);
     } catch (err) {
       toast('Thumbnails: ' + err.message, true);
-      await new Promise(r => setTimeout(r, 4000));
+      await new Promise(r => setTimeout(r, 6000));
     } finally {
       batch.forEach(id => deck.pending.delete(id));
       deck.busy = false;
-      if (deck.queue.length) setTimeout(pumpThumbs, DEMO ? 30 : 250);
+      // first two batches (current/next/upcoming) go out quickly; the rest of the deck trickles so we never hammer the bridge
+      if (deck.queue.length) setTimeout(pumpThumbs, DEMO ? 30 : (deck.batches <= 2 ? 250 : 1500));
     }
   }
 

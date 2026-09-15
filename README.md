@@ -164,6 +164,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.3.3** — transient Google front-door errors (HTTP 404/429/5xx "Sorry" pages) are retried twice before being reported; thumbnails are fetched 6 per call and trickle after the first two batches so the bridge is never hammered; Test report pings three times, counts recent bridge calls, and continues to the deck test even if the ping fails.
 - **1.3.2** — Test report recognises the unauthorized-script case (HTTP 404 on a correct token) and says exactly what to click; bridge ping answers even before authorization and reports `authorized`.
 - **1.3.1** — deck requests never overlap and back off (20→120 s) after failures, so a slow bridge can't exhaust Apps Script execution slots; Test report shows which path the bridge used and why the fast path failed, if it did. Bridge v4: reports `via`/`fastError`/`ms`, and the SlidesApp fallback skips per-run formatting on decks over 40 slides.
 - **1.3.0** — Countdown card shows Ontime's **Next** cue (cue number, title, planned duration) under the current one; the time-of-day clock moved to the header pills.
