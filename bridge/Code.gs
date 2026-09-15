@@ -3,7 +3,7 @@
  * ------------------------------------------------
  * A tiny Apps Script web app that runs AS YOU and hands the presenter view
  * three things it cannot get on its own from a local HTML file:
- *   • the slide list (ids, order, hidden flag) and speaker notes
+ *   • the slide list (ids, order, hidden flag) and speaker notes, with their formatting
  *   • slide images (Slides API thumbnails, 1600 px wide, ~30 min URLs)
  *   • the deck's revisionId so the view can notice edits
  *
@@ -37,7 +37,7 @@ function doGet(e) {
     if (p.token !== TOKEN) throw new Error('Bad token');
     switch (p.action) {
       case 'ping':
-        return json_({ ok: true, user: Session.getEffectiveUser().getEmail(), version: 2, slidesApi: typeof Slides !== 'undefined' });
+        return json_({ ok: true, user: Session.getEffectiveUser().getEmail(), version: 3, slidesApi: typeof Slides !== 'undefined' });
       case 'deck':
         return json_(getDeck_(p.id));
       case 'thumbs':
@@ -66,19 +66,20 @@ function getDeck_(id) {
 }
 
 function getDeckFast_(id) {
-  var fields = 'title,revisionId,pageSize,slides(objectId,slideProperties(isSkipped,notesPage(pageElements(shape(placeholder(type),text(textElements(textRun(content))))))))';
+  var fields = 'title,revisionId,pageSize,slides(objectId,slideProperties(isSkipped,notesPage(pageElements(shape(placeholder(type),text(textElements(paragraphMarker(bullet(glyph,nestingLevel)),textRun(content,style(bold,italic,underline,strikethrough,fontSize,foregroundColor)),autoText(content,style(bold,italic,fontSize)))))))))';
   var j = Slides.Presentations.get(id, { fields: fields });
   var slides = (j.slides || []).map(function (s, i) {
     var sp = s.slideProperties || {};
-    var notes = '';
+    var notes = '', notesEls = null;
     var els = (sp.notesPage && sp.notesPage.pageElements) || [];
     els.forEach(function (el) {
       var sh = el.shape;
       if (sh && sh.placeholder && sh.placeholder.type === 'BODY') {
-        notes = ((sh.text && sh.text.textElements) || []).map(function (t) { return (t.textRun && t.textRun.content) || ''; }).join('');
+        notesEls = (sh.text && sh.text.textElements) || [];              // styled runs: sizes, bold, bullets, colours
+        notes = notesEls.map(function (t) { return (t.textRun && t.textRun.content) || ''; }).join('');
       }
     });
-    return { id: s.objectId, index: i + 1, notes: notes.replace(/\s+$/, ''), skipped: !!sp.isSkipped };
+    return { id: s.objectId, index: i + 1, notes: notes.replace(/\s+$/, ''), notesEls: notesEls, skipped: !!sp.isSkipped };
   });
   var w = j.pageSize && j.pageSize.width && j.pageSize.width.magnitude;
   var h = j.pageSize && j.pageSize.height && j.pageSize.height.magnitude;
@@ -88,14 +89,29 @@ function getDeckFast_(id) {
 function getDeckSlow_(id) {
   var pres = SlidesApp.openById(id);
   var slides = pres.getSlides().map(function (s, i) {
-    var notes = '';
+    var notes = '', rich = null;
     try {
       var shape = s.getNotesPage().getSpeakerNotesShape();
-      if (shape) notes = shape.getText().asString();
+      if (shape) { notes = shape.getText().asString(); rich = richFromTextRange_(shape.getText()); }
     } catch (ignored) { /* slide without a notes shape */ }
-    return { id: s.getObjectId(), index: i + 1, notes: notes.replace(/\s+$/, ''), skipped: s.isSkipped() };
+    return { id: s.getObjectId(), index: i + 1, notes: notes.replace(/\s+$/, ''), rich: rich, skipped: s.isSkipped() };
   });
   return { ok: true, id: id, title: pres.getName(), width: pres.getPageWidth(), height: pres.getPageHeight(), revisionId: null, slides: slides, via: 'slidesapp' };
+}
+
+/** SlidesApp fallback: paragraphs of styled runs, same shape the view builds from the API. */
+function richFromTextRange_(tr) {
+  return tr.getParagraphs().map(function (p) {
+    var r = p.getRange(), g = null, lvl = 0;
+    try { var ls = r.getListStyle(); if (ls && ls.isInList()) { g = ls.getGlyph() || '•'; lvl = ls.getNestingLevel() || 0; } } catch (ignored) {}
+    var runs = r.getRuns().map(function (run) {
+      var st = run.getTextStyle(), c = null;
+      try { var col = st.getForegroundColor(); if (col && col.getColorType() == SlidesApp.ColorType.RGB) c = col.asRgbColor().asHexString(); } catch (ignored) {}
+      return { t: run.asString(), pt: st.getFontSize(), b: !!st.isBold(), i: !!st.isItalic(), u: !!st.isUnderline(), s: !!st.isStrikethrough(), c: c };
+    });
+    if (runs.length) runs[runs.length - 1].t = runs[runs.length - 1].t.replace(/\n$/, '');
+    return { g: g, lvl: lvl, runs: runs };
+  });
 }
 
 /** Thumbnails for a handful of pages. size: SMALL (200px) | MEDIUM (800px) | LARGE (1600px) */

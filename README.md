@@ -19,7 +19,7 @@ Download: grab `Mosc-tools--Presenter-View.html` from this repo (Code → Downlo
 
 - **Current slide** (large, 1600 px image) with slide number / total
 - **Next slide** thumbnail with its number — click it to advance
-- **Speaker notes** for the current slide, resizable (`A−` / `A+` or `−` / `+`)
+- **Speaker notes** for the current slide, with Google's formatting kept — relative font sizes, bold/italic/underline, bullets and indents, coloured text. `A−` / `A+` (or `−` / `+`) scale everything together, so an 18 pt heading stays bigger than 11 pt body text. Turn formatting off in Settings if you'd rather have plain text.
 - **Ontime countdown** — main timer of the running cue, or AUX 1/2/3. Amber under 3 min, red under 1, flashing past zero.
   Shows the running cue (number chip in its Ontime colour), "of 20:00" duration, Ontime's *message to stage*, and the show clock.
 - **Dark / light** toggle (`D` or the moon/sun button), remembered per browser
@@ -118,7 +118,7 @@ Mosc-tools--Presenter-View.html?slides=<link or id>&ontime=10.1.1.100:4001&bridg
 | `B` | Black the program output |
 | `D` | Dark / light |
 | `F` (or double-click the slide) | Fullscreen |
-| `+` / `−` | Notes bigger / smaller |
+| `+` / `−` | Notes bigger / smaller (scales Google's sizes proportionally) |
 | `R` | Reload the deck now |
 | `S` | Settings |
 | `Esc` | Close grid / settings |
@@ -145,6 +145,8 @@ Quick check of the bridge in a browser tab: `…/exec?action=ping&token=YOURTOKE
 - Thumbnail URLs are Google-signed and public for ~30 minutes to anyone holding the URL — normal for the Slides API.
 
 ## Version history
+
+- **1.2** — speaker notes keep Google Slides formatting (sizes, bold/italic, bullets, colours); A−/A+ scale proportionally. Bridge v3 (redeploy a new version to get formatted notes).
 
 - **1.1** — speaker notes moved to the full right half; bridge v2 reads the whole deck in one Slides API call (fixes timeouts on big decks); clearer on-screen errors with auto-retry.
 - **1.0** — first release: current/next/notes, Ontime main + AUX timers, dark/light, bridge + API-key access, grid, program output, external sync hook.

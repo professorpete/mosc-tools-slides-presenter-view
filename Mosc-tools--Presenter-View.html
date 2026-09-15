@@ -21,7 +21,8 @@
     --danger: #ff4b3e;
     --slide-bg: #000;
     --shadow: 0 10px 40px rgba(0,0,0,.55);
-    --notes-size: 32px;
+    --notes-scale: 2.2;          /* 11 pt in Google → ~32 px here; A−/A+ change this */
+    --notes-base-pt: 11;         /* size used for notes text that has no explicit size set in Google Slides */
   }
   html[data-theme="light"] {
     --bg: #f2f2ef;
@@ -167,8 +168,12 @@
   #notesCard .card-head .ctl { display: flex; align-items: center; gap: 4px; }
   .mini { width: 30px; height: 30px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; color: var(--dim-strong); font-size: 14px; font-weight: 700; border: 1px solid var(--border); background: var(--panel-2); }
   .mini:hover { color: var(--fg); border-color: var(--border-strong); }
-  #notes { flex: 1; min-height: 0; overflow: auto; padding: 10px 22px 22px; font-size: var(--notes-size); line-height: 1.42; white-space: pre-wrap; overflow-wrap: break-word; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
+  #notes { flex: 1; min-height: 0; overflow: auto; padding: 10px 22px 22px; font-size: calc(var(--notes-base-pt) * 1pt * var(--notes-scale)); line-height: 1.42; white-space: pre-wrap; overflow-wrap: break-word; scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
   #notes.empty { color: var(--dim); font-style: normal; }
+  #notes .np { margin: 0 0 .3em; min-height: 1em; }
+  #notes .np.bul { padding-left: 1.3em; }
+  #notes .np .g { display: inline-block; width: 1.3em; margin-left: -1.3em; }
+  #notes .np.blank { height: .7em; }
 
   footer { display: flex; align-items: center; justify-content: space-between; gap: 2vw; font-size: 11px; color: var(--dim); letter-spacing: .08em; }
   footer .brand { display: flex; align-items: center; gap: 8px; }
@@ -415,6 +420,7 @@
     </div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dSkip" checked /> Skip hidden slides</label></div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dCursor" /> Hide mouse cursor after 3 s idle</label></div>
+    <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dFmt" checked /> Keep Google Slides notes formatting (sizes, bold, bullets, colours)</label></div>
     <div class="setup-error" id="drawerError"></div>
     <div class="setup-actions">
       <button class="btn" type="submit">Apply &amp; reconnect</button>
@@ -456,6 +462,59 @@
   const LS_UI = 'moscPresenter.ui';
 
   /* ---------- Config ---------- */
+  /* ---------- Speaker notes: keep Google's formatting ---------- */
+  // Turns Slides API textElements (notes BODY placeholder) into paragraphs of styled runs.
+  function richFromEls(els) {
+    const paras = []; let cur = null;
+    const colorOf = (fc) => {
+      const c = fc && fc.opaqueColor && fc.opaqueColor.rgbColor; if (!c) return null;
+      const r = c.red || 0, g = c.green || 0, b = c.blue || 0;
+      if (Math.max(r, g, b) - Math.min(r, g, b) < 0.25) return null;            // greys/black/white: let the theme decide
+      return '#' + [r, g, b].map(v => Math.round(v * 255).toString(16).padStart(2, '0')).join('');
+    };
+    for (const el of els || []) {
+      if (el.paragraphMarker) {
+        const b = el.paragraphMarker.bullet;
+        cur = { g: b ? (b.glyph || '•') : null, lvl: (b && b.nestingLevel) || 0, runs: [] }; paras.push(cur); continue;
+      }
+      const tr = el.textRun || el.autoText; if (!tr) continue;
+      if (!cur) { cur = { g: null, lvl: 0, runs: [] }; paras.push(cur); }
+      const st = tr.style || {};
+      cur.runs.push({ t: tr.content || '', pt: st.fontSize && st.fontSize.magnitude || null, b: !!st.bold, i: !!st.italic, u: !!st.underline, s: !!st.strikethrough, c: colorOf(st.foregroundColor) });
+    }
+    for (const p of paras) { const last = p.runs[p.runs.length - 1]; if (last) last.t = last.t.replace(/\n$/, ''); }
+    while (paras.length && !paras[paras.length - 1].runs.some(r => r.t.trim())) paras.pop();
+    return paras;
+  }
+  function renderNotes(cur) {
+    $notes.innerHTML = ''; $notes.scrollTop = 0;
+    if (!cur) { $notes.textContent = 'End of presentation.'; $notes.classList.add('empty'); return; }
+    const rich = ui.notesFmt ? (cur.rich || (cur.notesEls ? richFromEls(cur.notesEls) : null)) : null;
+    const hasRich = rich && rich.some(p => p.runs.some(r => r.t.trim()));
+    if (!hasRich) {
+      $notes.textContent = cur.notes || 'No notes for this slide.'; $notes.classList.toggle('empty', !cur.notes); return;
+    }
+    $notes.classList.remove('empty');
+    const frag = document.createDocumentFragment();
+    for (const p of rich) {
+      const el = document.createElement('p'); el.className = 'np' + (p.g ? ' bul' : '');
+      if (p.lvl) el.style.marginLeft = (p.lvl * 1.4) + 'em';
+      if (!p.runs.some(r => r.t.trim())) { el.className += ' blank'; frag.appendChild(el); continue; }
+      if (p.g) { const g = document.createElement('span'); g.className = 'g'; g.textContent = p.g; el.appendChild(g); }
+      for (const r of p.runs) {
+        const sp = document.createElement('span'); sp.textContent = r.t;
+        if (r.pt) sp.style.fontSize = `calc(${r.pt}pt * var(--notes-scale))`;
+        if (r.b) sp.style.fontWeight = '700';
+        if (r.i) sp.style.fontStyle = 'italic';
+        const deco = [r.u ? 'underline' : '', r.s ? 'line-through' : ''].filter(Boolean).join(' '); if (deco) sp.style.textDecoration = deco;
+        if (r.c) sp.style.color = r.c;
+        el.appendChild(sp);
+      }
+      frag.appendChild(el);
+    }
+    $notes.appendChild(frag);
+  }
+
   const DEFAULTS = { slides: '', ontime: '', mode: 'bridge', bridge: '', token: '', key: '', timer: 'main', skip: true, cursor: false };
   let cfg = { ...DEFAULTS };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); } catch { /* ignore */ }
@@ -464,8 +523,11 @@
   if (params.get('bridge')) cfg.mode = 'bridge';
   const DEMO = params.get('demo') === '1';
 
-  let ui = { theme: 'dark', notesSize: 32, notesH: 40 };
+  let ui = { theme: 'dark', notesScale: 2.2, notesH: 40, notesFmt: true };
   try { Object.assign(ui, JSON.parse(localStorage.getItem(LS_UI) || '{}')); } catch { /* ignore */ }
+  if (ui.notesSize && !ui.notesScaleMigrated) { ui.notesScale = +(ui.notesSize / 14.67).toFixed(3); ui.notesScaleMigrated = true; delete ui.notesSize; }
+  if (typeof ui.notesFmt !== 'boolean') ui.notesFmt = true;
+  if (!(ui.notesScale > 0)) ui.notesScale = 2.2;
   if (params.get('theme') === 'light' || params.get('theme') === 'dark') ui.theme = params.get('theme');
 
   function saveCfg() { try { localStorage.setItem(LS_KEY, JSON.stringify(cfg)); } catch { /* private mode */ } }
@@ -488,7 +550,7 @@
     $('iconTheme').innerHTML = ui.theme === 'dark'
       ? '<path d="M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.4A5.5 5.5 0 0 1 12 3z"/>'
       : '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>';
-    document.documentElement.style.setProperty('--notes-size', ui.notesSize + 'px');
+    document.documentElement.style.setProperty('--notes-scale', String(ui.notesScale));
     document.documentElement.style.setProperty('--notes-h', ui.notesH + '%');
   }
   function toggleTheme() { ui.theme = ui.theme === 'dark' ? 'light' : 'dark'; saveUi(); applyTheme(); }
@@ -586,17 +648,18 @@
   async function fetchDeckMeta() {
     if (DEMO) return demoDeck();
     if (cfg.mode === 'key') {
-      const fields = 'title,revisionId,pageSize,slides(objectId,slideProperties(isSkipped,notesPage(pageElements(shape(placeholder(type),text(textElements(textRun(content))))))))';
+      const fields = 'title,revisionId,pageSize,slides(objectId,slideProperties(isSkipped,notesPage(pageElements(shape(placeholder(type),text(textElements(paragraphMarker(bullet(glyph,nestingLevel)),textRun(content,style(bold,italic,underline,strikethrough,fontSize,foregroundColor)),autoText(content,style(bold,italic,fontSize)))))))))';
       const j = await getJson(`https://slides.googleapis.com/v1/presentations/${deck.id}?key=${encodeURIComponent(cfg.key.trim())}&fields=${encodeURIComponent(fields)}`);
       const slides = (j.slides || []).map((s, i) => {
-        let notes = '';
+        let notes = '', notesEls = null;
         const els = s.slideProperties?.notesPage?.pageElements || [];
         for (const el of els) {
           if (el.shape?.placeholder?.type === 'BODY') {
-            notes = (el.shape.text?.textElements || []).map(t => t.textRun?.content || '').join('');
+            notesEls = el.shape.text?.textElements || [];
+            notes = notesEls.map(t => t.textRun?.content || '').join('');
           }
         }
-        return { id: s.objectId, index: i + 1, notes: notes.replace(/\s+$/, ''), skipped: !!s.slideProperties?.isSkipped };
+        return { id: s.objectId, index: i + 1, notes: notes.replace(/\s+$/, ''), notesEls, skipped: !!s.slideProperties?.isSkipped };
       });
       const w = j.pageSize?.width?.magnitude, h = j.pageSize?.height?.magnitude;
       return { title: j.title || 'Untitled', revisionId: j.revisionId, slides, ar: (w && h) ? w / h : 16 / 9 };
@@ -740,10 +803,7 @@
     const total = deck.slides.length;
     $curNum.innerHTML = cur ? `${cur.index} <small>/ ${total}</small>` : `End <small>/ ${total}</small>`;
     $nextNum.textContent = nxt ? nxt.index : (cur ? 'End' : '—');
-    const notes = cur ? cur.notes : '';
-    $notes.textContent = notes || (cur ? 'No notes for this slide.' : 'End of presentation.');
-    $notes.classList.toggle('empty', !notes);
-    $notes.scrollTop = 0;
+    renderNotes(cur);
     if (!$curSlide.classList.contains('err')) $curSlide.querySelector('.ph span').textContent = cur ? 'No image' : 'End of deck';
     $nextSlide.querySelector('.ph span').textContent = 'End of deck';
     updateOutput();
@@ -958,6 +1018,16 @@
   ];
   function demoDeck() {
     const slides = DEMO_TITLES.map((t, i) => ({ id: 'demo' + (i + 1), index: i + 1, notes: DEMO_NOTES[i], skipped: i === 8 }));
+    // Slide 1 shows how Google's own formatting comes through (sizes are relative to the deck's notes)
+    slides[0].rich = [
+      { g: null, lvl: 0, runs: [{ t: 'Welcome everyone. ', pt: 18, b: true }, { t: 'Wait for the walk-in music to fade.', pt: 11, i: true }] },
+      { g: null, lvl: 0, runs: [] },
+      { g: '●', lvl: 0, runs: [{ t: 'Housekeeping: exits, phones on silent, Q&A at the end.', pt: 11 }] },
+      { g: '●', lvl: 0, runs: [{ t: 'Thank the ', pt: 11 }, { t: 'AV crew', pt: 11, b: true, c: '#3b82f6' }, { t: ' and the venue.', pt: 11 }] },
+      { g: '○', lvl: 1, runs: [{ t: 'Ric especially.', pt: 9, i: true }] },
+      { g: null, lvl: 0, runs: [] },
+      { g: null, lvl: 0, runs: [{ t: 'DO NOT MENTION THE BUDGET', pt: 14, b: true, c: '#ff4b3e' }] }
+    ];
     return Promise.resolve({ title: 'Show Control 101 — Demo Deck', revisionId: 'demo', slides, ar: 16 / 9 });
   }
   function demoThumb(id) {
@@ -1019,7 +1089,7 @@
   window.addEventListener('hashchange', applyHashStart);
 
   function toggleFullscreen() { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen().catch(() => toast('Fullscreen not allowed here', true)); }
-  function notesSize(d) { ui.notesSize = Math.max(14, Math.min(64, ui.notesSize + d)); saveUi(); applyTheme(); }
+  function notesSize(d) { ui.notesScale = Math.max(0.6, Math.min(8, +(ui.notesScale * (d > 0 ? 1.12 : 1 / 1.12)).toFixed(3))); saveUi(); applyTheme(); toast(`Notes ${Math.round(ui.notesScale / 2.2 * 100)}%`); }
 
   $('btnPrev').addEventListener('click', prev); $('btnNext').addEventListener('click', next);
   $('btnGrid').addEventListener('click', openGrid); $('gridClose').addEventListener('click', closeGrid);
@@ -1062,13 +1132,13 @@
     $(P + 'Slides').value = cfg.slides; $(P + 'Ontime').value = cfg.ontime; $(P + 'Timer').value = cfg.timer;
     $(P + 'Bridge').value = cfg.bridge; $(P + 'Token').value = cfg.token; $(P + 'Key').value = cfg.key; $(P + 'Skip').checked = !!cfg.skip;
     segSet($(P + 'Mode'), cfg.mode, $(P === 'f' ? 'bridgeFields' : 'dBridgeFields'), $(P === 'f' ? 'keyFields' : 'dKeyFields'));
-    if (P === 'd') $('dCursor').checked = !!cfg.cursor;
+    if (P === 'd') { $('dCursor').checked = !!cfg.cursor; $('dFmt').checked = !!ui.notesFmt; }
   }
   function readForm(prefix, $err) {
     const P = prefix;
     const c = { ...cfg, slides: $(P + 'Slides').value.trim(), ontime: $(P + 'Ontime').value.trim(), timer: $(P + 'Timer').value, mode: segValue($(P + 'Mode')),
       bridge: $(P + 'Bridge').value.trim(), token: $(P + 'Token').value.trim(), key: $(P + 'Key').value.trim(), skip: $(P + 'Skip').checked };
-    if (P === 'd') c.cursor = $('dCursor').checked;
+    if (P === 'd') { c.cursor = $('dCursor').checked; if (ui.notesFmt !== $('dFmt').checked) { ui.notesFmt = $('dFmt').checked; saveUi(); render(); } }
     const d = extractDeckId(c.slides);
     if (d.error) return fail($err, d.error);
     if (c.mode === 'bridge') {
