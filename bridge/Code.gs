@@ -17,6 +17,11 @@
  *     (Adds the advanced `Slides` service used for thumbnails.)
  *  4. Select `test` in the toolbar → Run → approve the permissions prompt.
  *     Paste a deck ID into TEST_DECK_ID first if you want a real check.
+ *     DO NOT SKIP THIS. Without it the web app answers a wrong token with
+ *     JSON but the right token with Google's "Sorry, unable to open the
+ *     file" page (HTTP 404), because the script is not allowed to touch
+ *     Slides yet. Same thing after pasting into a NEW project or when
+ *     Google asks to re-authorize after new services were added.
  *  5. Deploy → New deployment → type: Web app
  *        Execute as:      Me
  *        Who has access:  Anyone           ← required; the HTML calls it anonymously
@@ -38,7 +43,8 @@ function doGet(e) {
     if (p.token !== TOKEN) throw new Error('Bad token');
     switch (p.action) {
       case 'ping':
-        return json_({ ok: true, user: Session.getEffectiveUser().getEmail(), version: 4, slidesApi: typeof Slides !== 'undefined' });
+        var who = null; try { who = Session.getEffectiveUser().getEmail(); } catch (ignored) { /* not authorized yet — ping still answers */ }
+        return json_({ ok: true, user: who, version: 4, slidesApi: typeof Slides !== 'undefined', authorized: !!who });
       case 'deck':
         return json_(getDeck_(p.id));
       case 'thumbs':
