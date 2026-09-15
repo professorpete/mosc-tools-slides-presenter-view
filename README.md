@@ -148,8 +148,15 @@ Quick check of the bridge in a browser tab: `…/exec?action=ping&token=YOURTOKE
 
 Open Settings (`S`) and click **Test bridge & notes formatting**. The report shows the bridge version, whether the Slides API service is enabled, how many slides carry formatting data, and an example styled run — plus the fix for whatever it finds. The info block above it also shows **Bridge vN** and **Notes formatting**. If it says the bridge is v1 or v2, the deployed Apps Script is old: open the script, replace the code with the current `bridge/Code.gs`, then **Deploy → Manage deployments → ✎ → Version: New version → Deploy**. Saving the file is not enough — Apps Script only serves the code that was in the last *deployment*. Reload the presenter view afterwards (a hard refresh, `Ctrl`+`F5`, if you use the hosted copy).
 
+### Bridge URL gives "Sorry, unable to open the file" / 404
+
+Google sometimes shows the web-app URL as `https://script.google.com/macros/**u/1/**s/…/exec`. That account-scoped form only works in the browser profile that owns the script and 404s everywhere else. Delete the `u/1/` so it reads `https://script.google.com/macros/s/…/exec`. (The presenter now does this for you when you paste.) Also make sure it ends in `/exec`, not `/dev`.
+
+If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, the browser will cut it short — the presenter encodes it correctly, but for hand tests either URL-encode it or use a token made of letters and digits.
+
 ## Version history
 
+- **1.2.3** — bridge URL field accepts and normalises `…/macros/u/1/s/…/exec` and `/dev` URLs to the universal `/macros/s/…/exec` form.
 - **1.2.2** — "Test bridge & notes formatting" button in Settings produces a plain-language diagnostic report.
 - **1.2.1** — Settings shows bridge version and whether formatted notes arrived; warns when the bridge is older than v3.
 - **1.2** — speaker notes keep Google Slides formatting (sizes, bold/italic, bullets, colours); A−/A+ scale proportionally. Bridge v3 (redeploy a new version to get formatted notes).

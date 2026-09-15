@@ -464,7 +464,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.2.2';
+  const BUILD = '1.2.3';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -1207,7 +1207,10 @@
     const d = extractDeckId(c.slides);
     if (d.error) return fail($err, d.error);
     if (c.mode === 'bridge') {
-      if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec/.test(c.bridge)) return fail($err, 'The bridge URL should look like https://script.google.com/macros/s/…/exec (copy it from Deploy → Manage deployments).');
+      // Accept the account-scoped form Google sometimes shows (…/macros/u/1/s/…/exec) and normalise it —
+      // that form 404s for other accounts and for the presenter, the plain /macros/s/ one works for everyone.
+      c.bridge = c.bridge.replace(/^https:\/\/script\.google\.com\/macros\/u\/\d+\/s\//, 'https://script.google.com/macros/s/').replace(/\/exec[?#].*$/, '/exec').replace(/\/dev([?#].*)?$/, '/exec');
+      if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec$/.test(c.bridge)) return fail($err, 'The bridge URL should look like https://script.google.com/macros/s/…/exec (copy it from Deploy → Manage deployments).');
       if (!c.token) return fail($err, 'Enter the bridge token you set in Code.gs.');
     } else if (!c.key) return fail($err, 'Enter a Google API key, or switch to the Apps Script bridge.');
     if (c.ontime && !normalizeOntime(c.ontime)) return fail($err, 'Could not understand the Ontime link.');
