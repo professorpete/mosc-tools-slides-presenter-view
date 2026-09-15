@@ -146,10 +146,11 @@ Quick check of the bridge in a browser tab: `…/exec?action=ping&token=YOURTOKE
 
 ### Notes show as plain text (no bold / sizes / colours)
 
-Open Settings (`S`). The info block at the bottom shows **Bridge vN** and **Notes formatting**. If it says the bridge is v1 or v2, the deployed Apps Script is old: open the script, replace the code with the current `bridge/Code.gs`, then **Deploy → Manage deployments → ✎ → Version: New version → Deploy**. Saving the file is not enough — Apps Script only serves the code that was in the last *deployment*. Reload the presenter view afterwards (a hard refresh, `Ctrl`+`F5`, if you use the hosted copy).
+Open Settings (`S`) and click **Test bridge & notes formatting**. The report shows the bridge version, whether the Slides API service is enabled, how many slides carry formatting data, and an example styled run — plus the fix for whatever it finds. The info block above it also shows **Bridge vN** and **Notes formatting**. If it says the bridge is v1 or v2, the deployed Apps Script is old: open the script, replace the code with the current `bridge/Code.gs`, then **Deploy → Manage deployments → ✎ → Version: New version → Deploy**. Saving the file is not enough — Apps Script only serves the code that was in the last *deployment*. Reload the presenter view afterwards (a hard refresh, `Ctrl`+`F5`, if you use the hosted copy).
 
 ## Version history
 
+- **1.2.2** — "Test bridge & notes formatting" button in Settings produces a plain-language diagnostic report.
 - **1.2.1** — Settings shows bridge version and whether formatted notes arrived; warns when the bridge is older than v3.
 - **1.2** — speaker notes keep Google Slides formatting (sizes, bold/italic, bullets, colours); A−/A+ scale proportionally. Bridge v3 (redeploy a new version to get formatted notes).
 

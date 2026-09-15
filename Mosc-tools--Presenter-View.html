@@ -428,6 +428,10 @@
     </div>
   </form>
   <div class="kv" id="kv"></div>
+  <div class="kv" style="border-top:0;margin-top:8px;padding-top:0">
+    <button class="btn" type="button" id="btnTest" style="font-size:13px;padding:8px 14px;background:transparent;color:var(--fg);border:1px solid var(--border)">Test bridge &amp; notes formatting</button>
+    <pre id="testOut" style="display:none;white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--fg);background:var(--panel-2,rgba(127,127,127,.12));border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:10px;max-height:40vh;overflow:auto"></pre>
+  </div>
 </aside>
 
 <div id="toast"></div>
@@ -460,6 +464,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
+  const BUILD = '1.2.2';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -707,7 +712,7 @@
       setPill($pillSlides, $pillSlidesText, DEMO ? 'Demo deck' : `Slides · ${deck.slides.length}`, DEMO ? 'demo' : 'ok');
       if (!isRefresh) { applyHashStart(); }
       render(); scheduleThumbs(); buildGrid();
-      checkNotesFormatting();
+      checkNotesFormatting().then(updateKv);
     } catch (err) {
       console.error('deck load failed', err);
       setPill($pillSlides, $pillSlidesText, 'Slides error', '');
@@ -727,11 +732,56 @@
     deck.fmtWarned = true;
     try { deck.bridge = await getJson(bridgeUrl('ping'), 20_000); } catch { return; }
     const v = deck.bridge.version || 1;
+    updateKv();
     if (v < 3 && !deck.slides.some(s => s.notesEls || s.rich)) {
       deck.fmtWarned = true;
       toast(`Bridge is v${v} — paste the latest Code.gs and Deploy → Manage deployments → New version to get formatted speaker notes`, true);
     }
   }
+
+  // Does this slide's notes payload contain any explicit style (bold, size, colour…)?
+  function slideHasStyle(sl) {
+    if (sl.rich) return sl.rich.some(p => p.g || p.runs.some(r => r.b || r.i || r.u || r.s || r.pt || r.c));
+    return (sl.notesEls || []).some(el => (el.paragraphMarker && el.paragraphMarker.bullet) || (el.textRun && el.textRun.style && Object.keys(el.textRun.style).length));
+  }
+
+  // Settings → "Test bridge": a plain-language report the operator can paste back to whoever supports this tool.
+  async function testBridge() {
+    const out = $('testOut'); out.style.display = 'block'; out.textContent = 'Testing…';
+    const lines = [];
+    const put = (t) => { lines.push(t); out.textContent = lines.join('\n'); };
+    put(`Presenter View build ${BUILD}`);
+    put(`Mode: ${DEMO ? 'demo' : cfg.mode}${cfg.mode === 'bridge' ? '  Bridge: ' + (cfg.bridge || '').replace(/\/macros\/s\/[^/]+/, '/macros/s/…') : ''}`);
+    if (DEMO) { put('Demo mode — nothing to test.'); return; }
+    if (cfg.mode === 'bridge') {
+      const t0 = performance.now();
+      try {
+        const p = await getJson(bridgeUrl('ping'), 20_000);
+        deck.bridge = p;
+        put(`Ping: OK in ${Math.round(performance.now() - t0)} ms — bridge v${p.version || 1}, runs as ${p.user || '?'}, Slides API service ${p.slidesApi === false ? 'NOT enabled (slow fallback in use)' : 'enabled'}`);
+        if ((p.version || 1) < 3) put('→ The deployed bridge is older than v3. Paste the current Code.gs, then Deploy → Manage deployments → ✎ → New version → Deploy.');
+      } catch (e) { put(`Ping: FAILED — ${e.message}`); return; }
+    }
+    const t1 = performance.now();
+    try {
+      const meta = await fetchDeckMeta();
+      const withNotes = meta.slides.filter(s => (s.notes || '').trim()).length;
+      const withPayload = meta.slides.filter(s => s.notesEls || s.rich).length;
+      const styled = meta.slides.filter(slideHasStyle).length;
+      put(`Deck: OK in ${Math.round(performance.now() - t1)} ms — "${meta.title}", ${meta.slides.length} slides, ${withNotes} with notes`);
+      put(`Formatting payload: ${withPayload} slides carry formatting data, ${styled} of them have explicit styles (bold/size/colour/bullets)`);
+      if (!withPayload) put('→ No formatting data in the response. The bridge that answered is not v3 — redeploy a NEW VERSION of the Apps Script (saving is not enough).');
+      else if (!styled && withNotes) put('→ Formatting data arrived but Google reports no explicit styles on any note. Styles only come through when set directly on the text in the notes pane (select text → bold / size / colour). Text inheriting from the theme has no style to send.');
+      else if (styled) {
+        const ex = meta.slides.find(slideHasStyle);
+        const rich = ex.rich || richFromEls(ex.notesEls);
+        const run = rich.flatMap(p => p.runs).find(r => r.b || r.i || r.pt || r.c);
+        if (run) put(`Example (slide ${ex.index}): "${run.t.trim().slice(0, 40)}" → ${[run.b && 'bold', run.i && 'italic', run.pt && run.pt + 'pt', run.c && run.c].filter(Boolean).join(', ')}`);
+        put(ui.notesFmt ? '✓ Formatting is being rendered.' : '→ Formatting arrived but the "Keep Google Slides notes formatting" box is unticked.');
+      }
+    } catch (e) { put(`Deck: FAILED — ${e.message}`); }
+  }
+  $('btnTest').addEventListener('click', testBridge);
 
   function applyHashStart() {
     const h = decodeURIComponent(location.hash.replace(/^#/, ''));
@@ -1203,7 +1253,7 @@
   });
   function updateKv() {
     const l = normalizeOntime(cfg.ontime);
-    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' + (deck.bridge ? ` v${deck.bridge.version}${deck.bridge.slidesApi === false ? ' · Slides API service NOT enabled' : ''}` : '') : 'API key'}<br><b>Notes formatting:</b> ${DEMO ? 'demo' : deck.slides.some(s => s.notesEls || s.rich) ? 'received from Google' : (deck.slides.length ? 'plain text only — bridge needs Code.gs v3 and a new deployment version' : '—')}<br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
+    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' + (deck.bridge ? ` v${deck.bridge.version}${deck.bridge.slidesApi === false ? ' · Slides API service NOT enabled' : ''}` : '') : 'API key'}<br><b>Notes formatting:</b> ${DEMO ? 'demo' : !deck.slides.length ? 'deck not loaded yet' : !deck.slides.some(s => s.notesEls || s.rich) ? 'plain text only — bridge needs Code.gs v3 and a new deployment version' : `received from Google · ${deck.slides.filter(slideHasStyle).length} of ${deck.slides.length} slides have styled notes`}<br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
   }
 
   /* ---------- Boot ---------- */
