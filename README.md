@@ -123,6 +123,10 @@ Mosc-tools--Presenter-View.html?slides=<link or id>&ontime=10.1.1.100:4001&bridg
 | `S` | Settings |
 | `Esc` | Close grid / settings |
 
+## Slides with click-builds (animations)
+
+The Slides API renders each slide as a single image with every animation already played, and it has no notion of build steps, so a slide with four clicks shows as its finished state. Workaround: duplicate the slide once per step in Google Slides (delete the objects that haven't appeared yet on the earlier copies, remove the animations), and write `[build]` anywhere in the speaker notes of each continuation copy. The presenter then shows them as **7, 7A, 7B, 7C** and the following real slide is still **8**; the total, the grid, the Next card and the hash all use those labels. If a continuation copy's notes contain only `[build]`, it shows the base slide's notes. Jump with `7B` + Enter.
+
 ## Slide images and the local cache
 
 The first time a deck is opened the presenter pulls every slide image (1600 px) through the bridge, 8 slides per request, one request at a time — current slide first, forward to the end, then backwards to slide 1 — and stores the bytes in the browser's IndexedDB. From then on the images come off disk instantly; Google is only asked again when the deck's revision changes or you press **Clear slide cache & re-download** in Settings. Expect roughly 100–300 KB per slide, so a 100-slide deck is around 20 MB. Each browser profile has its own cache, so pre-open the deck on the show machine before doors.
@@ -174,6 +178,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.5.0** — build steps. Google's API renders each slide as one flat image with every animation already played, so click-builds can't be shown. Duplicate the slide once per step instead, and put `[build]` in the speaker notes of each continuation slide: the presenter numbers them 7, 7A, 7B… and the next real slide stays 8 (the total counts real slides only). A continuation slide whose notes contain only `[build]` shows the base slide's notes. Type `7B` + Enter (or `#7B` in the URL) to jump to a step; the grid and Next card show the same labels. Slides pill reads e.g. "Slides · 24 · 3 builds".
 - **1.4.2** — overtime timer no longer blinks to black: it pulses gently between red and light red while counting up.
 - **1.4.1** — show-safe error handling: problems (deck/thumbnail time-outs, bridge version) no longer pop up on screen; they go to a "Problems this session" log in Settings and the Slides pill quietly turns red until you open Settings. New sync button (↻, left of the Slides pill, or `R`) re-reads notes and slide order from Google Slides and re-downloads every image, while keeping the old images on screen until the new ones arrive. Fixed square boxes in speaker notes: Google Slides stores Shift+Enter as a vertical-tab character (U+000B) that Chrome draws as a box — now rendered as a line break; PowerPoint-import Wingdings bullets are mapped to normal bullets.
 - **1.4.0** — whole-deck local slide cache. On load the presenter downloads every slide image once, starting at the current slide and running forward to the end, then backwards to slide 1, and stores the bytes in the browser's IndexedDB keyed by deck + revision. Reopening the presenter for the same deck restores the images from disk without contacting Google; editing the deck (new revision) invalidates and re-downloads. Header pill shows "Caching slides n/N" while it works; Settings shows cache size and a "Clear slide cache & re-download" button.

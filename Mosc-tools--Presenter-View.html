@@ -485,7 +485,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.4.2';
+  const BUILD = '1.5.0';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -528,11 +528,20 @@
   function renderNotes(cur) {
     $notes.innerHTML = ''; $notes.scrollTop = 0;
     if (!cur) { $notes.textContent = 'End of presentation.'; $notes.classList.add('empty'); return; }
+    if (cur.build && cur.base && !stripBuildTag(cur.notes).trim()) cur = cur.base;   // [build] with nothing else → show the base slide's notes
     let rich = ui.notesFmt ? (cur.rich || (cur.notesEls ? richFromEls(cur.notesEls) : null)) : null;
-    if (rich && !rich.cleaned) { rich = rich.map(p => ({ ...p, g: p.g == null ? null : cleanGlyph(p.g, p.lvl), runs: p.runs.map(r => ({ ...r, t: cleanText(r.t) })) })); rich.cleaned = true; if (cur.rich) cur.rich = rich; }
+    if (rich && !rich.cleaned) {
+      rich = rich.map(p => {
+        const had = p.runs.some(r => isBuildTag(r.t));
+        const runs = p.runs.map(r => ({ ...r, t: stripBuildTag(r.t) }));
+        if (had) { const f = runs.find(r => r.t.trim()); if (f) f.t = f.t.replace(/^[ \t]+/, ''); }
+        return had && !runs.some(r => r.t.trim()) ? null : { ...p, g: p.g == null ? null : cleanGlyph(p.g, p.lvl), runs };
+      }).filter(Boolean);
+      rich.cleaned = true; if (cur.rich) cur.rich = rich;
+    }
     const hasRich = rich && rich.some(p => p.runs.some(r => r.t.trim()));
     if (!hasRich) {
-      const plain = cleanText(cur.notes).replace(/\s+$/, '');
+      const plain = stripBuildTag(cur.notes).trim();
       $notes.textContent = plain || 'No notes for this slide.'; $notes.classList.toggle('empty', !plain); return;
     }
     $notes.classList.remove('empty');
@@ -746,7 +755,7 @@
     if (DEMO) { setPill($pillSlides, $pillSlidesText, 'Demo deck', 'demo'); return; }
     const total = deck.slides.length, have = cachedCount();
     if (total && have < total && (deck.queue.length || deck.busy || deck.pumpSoon)) setPill($pillSlides, $pillSlidesText, `Caching slides ${have}/${total}`, 'busy');
-    else setPill($pillSlides, $pillSlidesText, `Slides · ${total}`, 'ok');
+    else { const real = deck.realCount || total; setPill($pillSlides, $pillSlidesText, `Slides · ${real}` + (real < total ? ` · ${total - real} builds` : ''), 'ok'); }
   }
 
   function bridgeUrl(action, extra) {
@@ -835,7 +844,22 @@
     return j.thumbs || {};
   }
 
+  /* Build steps: a slide whose speaker notes contain [build] (or #build) is a continuation of the previous real slide —
+     it is numbered 7A, 7B, … and does not advance the slide count. Empty [build] notes inherit the base slide's notes. */
+  const BUILD_RE = /\[\s*build\s*\]|#build\b/gi;
+  const isBuildTag = (t) => { BUILD_RE.lastIndex = 0; return BUILD_RE.test(cleanText(t)); };
+  function labelSlides() {
+    let num = 0, step = 0, base = null;
+    for (const s of deck.slides) {
+      s.build = num > 0 && isBuildTag(s.notes);
+      if (s.build) { step++; s.num = num; s.label = num + (step <= 26 ? String.fromCharCode(64 + step) : String(step)); s.base = base; }
+      else { num++; step = 0; base = s; s.num = num; s.label = String(num); s.base = null; }
+    }
+    deck.realCount = num;
+  }
+  const stripBuildTag = (t) => cleanText(t).replace(BUILD_RE, '');
   function rebuildOrder() {
+    labelSlides();
     deck.order = [];
     deck.slides.forEach((s, i) => { if (!(cfg.skip && s.skipped)) deck.order.push(i); });
     if (!deck.order.length) deck.slides.forEach((_, i) => deck.order.push(i));
@@ -963,7 +987,7 @@
     if (!h) return;
     const m = h.match(/slide=id\.(.+)$/) || h.match(/^id\.(.+)$/);
     if (m) { gotoSlideId(m[1], true); return; }
-    if (/^\d+$/.test(h)) gotoIndex(parseInt(h, 10), true);
+    if (/^\d+[A-Za-z]?$/.test(h)) gotoLabel(h, true);
   }
 
   /* ---------- Thumbnail scheduler: current, next, then outward ---------- */
@@ -1023,9 +1047,14 @@
     p = Math.max(0, Math.min(p, deck.order.length));      // order.length == "end of deck" black
     if (p === deck.pos) return;
     deck.pos = p; render(); scheduleThumbs(); markGridCurrent();
-    if (!silent) { try { history.replaceState(null, '', '#' + (p < deck.order.length ? deck.slides[deck.order[p]].index : 'end')); } catch { /* file:// may refuse */ } }
+    if (!silent) { try { history.replaceState(null, '', '#' + (p < deck.order.length ? deck.slides[deck.order[p]].label : 'end')); } catch { /* file:// may refuse */ } }
   }
   function gotoIndex(index, silent) { const p = deck.order.findIndex(i => deck.slides[i].index === index); if (p >= 0) gotoPos(p, silent); else toast(`No slide ${index}`, true); }
+  function gotoLabel(label, silent) {                       // "7" → slide 7, "7B" → second build step of slide 7
+    const want = String(label).toUpperCase().replace(/\s+/g, '');
+    const p = deck.order.findIndex(i => deck.slides[i].label === want);
+    if (p >= 0) gotoPos(p, silent); else toast(`No slide ${want}`, true);
+  }
   function gotoSlideId(id, silent) { const p = deck.order.findIndex(i => deck.slides[i].id === id); if (p >= 0) gotoPos(p, silent); }
   const next = () => gotoPos(deck.pos + 1);
   const prev = () => gotoPos(deck.pos - 1);
@@ -1056,9 +1085,9 @@
     setSlideImg($curImg, $curSlide, cur);
     setSlideImg($nextImg, $nextSlide, nxt);
     if (imagesOnly) { updateOutput(); return; }
-    const total = deck.slides.length;
-    $curNum.innerHTML = cur ? `${cur.index} <small>/ ${total}</small>` : `End <small>/ ${total}</small>`;
-    $nextNum.textContent = nxt ? nxt.index : (cur ? 'End' : '—');
+    const total = deck.realCount || deck.slides.length;
+    $curNum.innerHTML = cur ? `${cur.label} <small>/ ${total}</small>` : `End <small>/ ${total}</small>`;
+    $nextNum.textContent = nxt ? nxt.label : (cur ? 'End' : '—');
     renderNotes(cur);
     if (!$curSlide.classList.contains('err')) $curSlide.querySelector('.ph span').textContent = cur ? 'No image' : 'End of deck';
     $nextSlide.querySelector('.ph span').textContent = 'End of deck';
@@ -1072,7 +1101,7 @@
       const cell = document.createElement('div');
       cell.className = 'gcell' + (cfg.skip && s.skipped ? ' skip' : '');
       cell.dataset.id = s.id;
-      cell.innerHTML = `<div class="ph">${s.index}</div><span class="n">${s.index}${s.skipped ? ' · hidden' : ''}</span>`;
+      cell.innerHTML = `<div class="ph">${s.label}</div><span class="n">${s.label}${s.skipped ? ' · hidden' : ''}</span>`;
       cell.addEventListener('click', () => { const p = deck.order.indexOf(i); if (p >= 0) { gotoPos(p); closeGrid(); } else toast('That slide is hidden'); });
       $list.appendChild(cell);
     });
@@ -1333,8 +1362,8 @@
     if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp' || k === 'Backspace') { e.preventDefault(); prev(); return; }
     if (k === 'Home') { e.preventDefault(); gotoPos(0); return; }
     if (k === 'End') { e.preventDefault(); gotoPos(deck.order.length - 1); return; }
-    if (/^\d$/.test(k)) { jump += k; $jumpBuf.textContent = '→ ' + jump; clearTimeout(jumpT); jumpT = setTimeout(() => { jump = ''; $jumpBuf.textContent = ''; }, 2500); return; }
-    if (k === 'Enter' && jump) { e.preventDefault(); gotoIndex(parseInt(jump, 10)); jump = ''; $jumpBuf.textContent = ''; return; }
+    if (/^\d$/.test(k) || (jump && /^\d+$/.test(jump) && /^[a-zA-Z]$/.test(k))) { jump += k.toUpperCase(); $jumpBuf.textContent = '→ ' + jump; clearTimeout(jumpT); jumpT = setTimeout(() => { jump = ''; $jumpBuf.textContent = ''; }, 2500); return; }
+    if (k === 'Enter' && jump) { e.preventDefault(); gotoLabel(jump); jump = ''; $jumpBuf.textContent = ''; return; }
     if (k === 'Escape') { if ($grid.classList.contains('on')) closeGrid(); else if (jump) { jump = ''; $jumpBuf.textContent = ''; } return; }
     const lk = k.toLowerCase();
     if (lk === 'g') { $grid.classList.contains('on') ? closeGrid() : openGrid(); }
@@ -1352,6 +1381,7 @@
     const m = e.data; if (!m || m.type !== 'mosc-presenter') return;
     if (m.action === 'goto' || !m.action) {
       if (typeof m.index === 'number') gotoIndex(m.index);
+      else if (typeof m.label === 'string') gotoLabel(m.label);
       else if (typeof m.slideId === 'string') gotoSlideId(m.slideId.replace(/^id\./, ''));
       else if (typeof m.delta === 'number') gotoPos(deck.pos + m.delta);
     } else if (m.action === 'next') next(); else if (m.action === 'prev') prev(); else if (m.action === 'black') toggleBlack();
