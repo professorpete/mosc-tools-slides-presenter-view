@@ -18,7 +18,7 @@
     --accent: #3b82f6;
     --good: #35da8c;
     --warn: #ffbc00;
-    --danger: #ff4b3e;
+    --danger: #ff4b3e; --danger-soft: #ff9a92;
     --slide-bg: #000;
     --shadow: 0 10px 40px rgba(0,0,0,.55);
     --notes-scale: 2.2;          /* 11 pt in Google → ~32 px here; A−/A+ change this */
@@ -36,7 +36,7 @@
     --accent: #2563eb;
     --good: #16a34a;
     --warn: #d97706;
-    --danger: #dc2626;
+    --danger: #dc2626; --danger-soft: #f0857d;
     --slide-bg: #e6e6e2;
     --shadow: 0 10px 30px rgba(0,0,0,.12);
   }
@@ -151,7 +151,8 @@
   #timer { font-size: min(24cqw, 11vh); line-height: 1; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; text-align: center; padding: 4px 0 2px; transition: color .2s; }
   #timer.warning { color: var(--warn); }
   #timer.overtime { color: var(--danger); }
-  #timer.finished { color: var(--danger); animation: blink 1s steps(2, start) infinite; }
+  #timer.finished { color: var(--danger); animation: pulse-red 1.2s ease-in-out infinite; }   /* counting up: soft red ⇄ light red, never to black */
+  @keyframes pulse-red { 0%, 100% { color: var(--danger); } 50% { color: var(--danger-soft); } }
   #timer.paused { color: var(--dim-strong); }
   #timer.stopped { color: var(--dim); }
   @keyframes blink { to { visibility: hidden; } }
@@ -484,7 +485,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.4.1';
+  const BUILD = '1.4.2';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
