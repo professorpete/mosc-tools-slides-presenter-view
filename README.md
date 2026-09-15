@@ -123,6 +123,10 @@ Mosc-tools--Presenter-View.html?slides=<link or id>&ontime=10.1.1.100:4001&bridg
 | `S` | Settings |
 | `Esc` | Close grid / settings |
 
+## Slide images and the local cache
+
+The first time a deck is opened the presenter pulls every slide image (1600 px) through the bridge, 8 slides per request, one request at a time — current slide first, forward to the end, then backwards to slide 1 — and stores the bytes in the browser's IndexedDB. From then on the images come off disk instantly; Google is only asked again when the deck's revision changes or you press **Clear slide cache & re-download** in Settings. Expect roughly 100–300 KB per slide, so a 100-slide deck is around 20 MB. Each browser profile has its own cache, so pre-open the deck on the show machine before doors.
+
 ## Troubleshooting
 
 | Symptom | Cause / fix |
@@ -164,6 +168,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.4.0** — whole-deck local slide cache. On load the presenter downloads every slide image once, starting at the current slide and running forward to the end, then backwards to slide 1, and stores the bytes in the browser's IndexedDB keyed by deck + revision. Reopening the presenter for the same deck restores the images from disk without contacting Google; editing the deck (new revision) invalidates and re-downloads. Header pill shows "Caching slides n/N" while it works; Settings shows cache size and a "Clear slide cache & re-download" button.
 - **1.3.3** — transient Google front-door errors (HTTP 404/429/5xx "Sorry" pages) are retried twice before being reported; thumbnails are fetched 6 per call and trickle after the first two batches so the bridge is never hammered; Test report pings three times, counts recent bridge calls, and continues to the deck test even if the ping fails.
 - **1.3.2** — Test report recognises the unauthorized-script case (HTTP 404 on a correct token) and says exactly what to click; bridge ping answers even before authorization and reports `authorized`.
 - **1.3.1** — deck requests never overlap and back off (20→120 s) after failures, so a slow bridge can't exhaust Apps Script execution slots; Test report shows which path the bridge used and why the fast path failed, if it did. Bridge v4: reports `via`/`fastError`/`ms`, and the SlidesApp fallback skips per-run formatting on decks over 40 slides.

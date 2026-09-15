@@ -438,6 +438,7 @@
   <div class="kv" id="kv"></div>
   <div class="kv" style="border-top:0;margin-top:8px;padding-top:0">
     <button class="btn" type="button" id="btnTest" style="font-size:13px;padding:8px 14px;background:transparent;color:var(--fg);border:1px solid var(--border)">Test bridge &amp; notes formatting</button>
+    <button class="btn" type="button" id="btnClearCache" style="font-size:13px;padding:8px 14px;margin-left:8px;background:transparent;color:var(--fg);border:1px solid var(--border)">Clear slide cache &amp; re-download</button>
     <pre id="testOut" style="display:none;white-space:pre-wrap;font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;color:var(--fg);background:var(--panel-2,rgba(127,127,127,.12));border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:10px;max-height:40vh;overflow:auto"></pre>
   </div>
 </aside>
@@ -472,7 +473,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.3.3';
+  const BUILD = '1.4.0';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -627,10 +628,80 @@
     order: [],                             // indexes into slides[] that are navigable
     pos: 0,                                // position within order[]
     ar: 16 / 9, revisionId: null,
-    thumbs: new Map(),                     // slideId -> { url, at }
+    thumbs: new Map(),                     // slideId -> { url, at, local }   local = image bytes held in memory + IndexedDB
     pending: new Set(), queue: [], busy: false,
+    cacheKey: null,                        // "<deckId>|<revisionId>|" prefix for IndexedDB entries
   };
-  const THUMB_TTL = 25 * 60_000;           // Google's URLs live ~30 min
+  const THUMB_TTL = 25 * 60_000;           // Google's URLs live ~30 min (only matters when a thumbnail could not be stored locally)
+
+  /* ---------- Local slide cache (IndexedDB) ----------
+     Every thumbnail is downloaded once, kept as a Blob, and written to IndexedDB under <deckId>|<revisionId>|<slideId>.
+     Reopening the presenter for the same deck revision hydrates from disk and never touches Google for images. */
+  const CACHE_DB = 'moscPresenterThumbs', CACHE_STORE = 'thumbs', CACHE_NOREV_TTL = 24 * 3600_000;
+  let dbPromise = null;
+  function openDb() {
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise((res) => {
+      try {
+        const r = indexedDB.open(CACHE_DB, 1);
+        r.onupgradeneeded = () => r.result.createObjectStore(CACHE_STORE);
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => res(null);
+        r.onblocked = () => res(null);
+      } catch { res(null); }
+    });
+    return dbPromise;
+  }
+  function idb(mode, fn) {
+    return openDb().then(db => new Promise((res) => {
+      if (!db) return res(null);
+      try {
+        const tx = db.transaction(CACHE_STORE, mode), st = tx.objectStore(CACHE_STORE);
+        let out = null;
+        fn(st, (v) => { out = v; });
+        tx.oncomplete = () => res(out); tx.onerror = () => res(null); tx.onabort = () => res(null);
+      } catch { res(null); }
+    }));
+  }
+  const prefixRange = (prefix) => IDBKeyRange.bound(prefix, prefix + '\uffff');
+  function cacheGetAll(prefix) {                   // -> Map slideId -> { blob, at }
+    return idb('readonly', (st, set) => {
+      const m = new Map(); set(m);
+      st.openCursor(prefixRange(prefix)).onsuccess = (e) => { const c = e.target.result; if (!c) return; m.set(String(c.key).slice(prefix.length), c.value); c.continue(); };
+    });
+  }
+  const cachePut = (key, val) => idb('readwrite', (st) => st.put(val, key));
+  const cacheDeletePrefix = (prefix) => idb('readwrite', (st) => st.delete(prefixRange(prefix)));
+  const cacheClearAll = () => idb('readwrite', (st) => st.clear());
+  function cacheStats(prefix) {                    // -> { n, bytes }
+    return idb('readonly', (st, set) => {
+      const o = { n: 0, bytes: 0 }; set(o);
+      st.openCursor(prefixRange(prefix)).onsuccess = (e) => { const c = e.target.result; if (!c) return; o.n++; o.bytes += c.value?.blob?.size || 0; c.continue(); };
+    });
+  }
+  function setLocalThumb(id, blob) {
+    const old = deck.thumbs.get(id); if (old?.local && old.url) URL.revokeObjectURL(old.url);
+    deck.thumbs.set(id, { url: URL.createObjectURL(blob), at: performance.now(), local: true });
+  }
+  async function hydrateThumbCache() {
+    if (DEMO || !deck.cacheKey) return 0;
+    const m = await cacheGetAll(deck.cacheKey); if (!m) return 0;
+    const norev = deck.cacheKey.includes('|norev|');
+    let n = 0;
+    for (const [id, v] of m) {
+      if (!v?.blob) continue;
+      if (norev && Date.now() - (v.at || 0) > CACHE_NOREV_TTL) continue;
+      if (!deck.thumbs.get(id)?.local) { setLocalThumb(id, v.blob); n++; }
+    }
+    return n;
+  }
+  function cachedCount() { let n = 0; for (const s of deck.slides) if (deck.thumbs.get(s.id)?.local) n++; return n; }
+  function updateSlidesPill() {
+    if (DEMO) { setPill($pillSlides, $pillSlidesText, 'Demo deck', 'demo'); return; }
+    const total = deck.slides.length, have = cachedCount();
+    if (total && have < total && (deck.queue.length || deck.busy)) setPill($pillSlides, $pillSlidesText, `Caching slides ${have}/${total}`, 'busy');
+    else setPill($pillSlides, $pillSlidesText, `Slides · ${total}`, 'ok');
+  }
 
   function bridgeUrl(action, extra) {
     const u = new URL(cfg.bridge.trim());
@@ -739,11 +810,18 @@
       document.documentElement.style.setProperty('--ar', String(deck.ar));
       rebuildOrder();
       if (currentId) { const p = deck.order.findIndex(i => deck.slides[i].id === currentId); if (p >= 0) deck.pos = p; }
-      if (changed) { deck.thumbs.clear(); deck.queue = []; toast('Deck changed in Google Slides — refreshing images'); }
+      const newKey = DEMO ? null : `${deck.id}|${meta.revisionId || 'norev'}|`;
+      if (changed) {
+        for (const t of deck.thumbs.values()) if (t.local && t.url) URL.revokeObjectURL(t.url);
+        deck.thumbs.clear(); deck.queue = [];
+        if (deck.id) cacheDeletePrefix(deck.id + '|');           // old revision's images are useless now
+        toast('Deck changed in Google Slides — refreshing images');
+      }
+      const keyChanged = newKey !== deck.cacheKey; deck.cacheKey = newKey;
       $deckTitle.textContent = deck.title; document.title = deck.title + ' — Presenter View';
-      setPill($pillSlides, $pillSlidesText, DEMO ? 'Demo deck' : `Slides · ${deck.slides.length}`, DEMO ? 'demo' : 'ok');
       if (!isRefresh) { applyHashStart(); }
-      render(); scheduleThumbs(); buildGrid();
+      if (keyChanged) { const n = await hydrateThumbCache(); if (n) console.info(`slide cache: ${n} image(s) restored from disk`); }
+      render(); scheduleThumbs(); buildGrid(); updateSlidesPill();
       checkNotesFormatting().then(updateKv);
     } catch (err) {
       console.error('deck load failed', err);
@@ -844,14 +922,14 @@
   }
 
   /* ---------- Thumbnail scheduler: current, next, then outward ---------- */
-  function thumbFresh(id) { const t = deck.thumbs.get(id); return t && (performance.now() - t.at) < THUMB_TTL; }
+  function thumbFresh(id) { const t = deck.thumbs.get(id); return !!t && (t.local || (performance.now() - t.at) < THUMB_TTL); }
 
   function scheduleThumbs() {
     const want = [];
     const n = deck.order.length;
     const push = (p) => { if (p >= 0 && p < n) { const id = deck.slides[deck.order[p]].id; if (!thumbFresh(id) && !deck.pending.has(id) && !want.includes(id)) want.push(id); } };
-    push(deck.pos); push(deck.pos + 1); push(deck.pos + 2); push(deck.pos - 1); push(deck.pos + 3); push(deck.pos + 4);
-    for (let d = 2; d < n; d++) { push(deck.pos - d); push(deck.pos + d + 3); }
+    for (let p = deck.pos; p < n; p++) push(p);            // current slide, then forward to the end…
+    for (let p = deck.pos - 1; p >= 0; p--) push(p);       // …then backwards from the current slide to slide 1
     // hidden slides last, so the grid still shows them
     deck.slides.forEach(s => { if (cfg.skip && s.skipped && !thumbFresh(s.id) && !deck.pending.has(s.id) && !want.includes(s.id)) want.push(s.id); });
     deck.queue = want;
@@ -861,13 +939,26 @@
   async function pumpThumbs() {
     if (deck.busy || !deck.queue.length) return;
     deck.busy = true;
-    const batch = deck.queue.splice(0, cfg.mode === 'key' ? 3 : 6);
-    deck.batches = (deck.batches || 0) + 1;
+    const batch = deck.queue.splice(0, DEMO ? 12 : cfg.mode === 'key' ? 4 : 8);
     batch.forEach(id => deck.pending.add(id));
+    const key = deck.cacheKey;
     try {
       const res = await fetchThumbs(batch);
       const now = performance.now();
-      for (const id of batch) if (res[id]) deck.thumbs.set(id, { url: res[id], at: now });
+      await Promise.all(batch.map(async (id) => {
+        const url = res[id]; if (!url) return;
+        if (DEMO) { deck.thumbs.set(id, { url, at: now, local: true }); return; }
+        try {                                                     // pull the bytes once, keep them for good
+          const r = await fetch(url, { mode: 'cors', cache: 'no-store' });
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          const blob = await r.blob(); if (!blob.size) throw new Error('empty');
+          setLocalThumb(id, blob);
+          if (key && key === deck.cacheKey) cachePut(key + id, { blob, at: Date.now() });
+        } catch (e) {                                             // could not read the bytes (CORS) → fall back to the 30-minute URL
+          console.warn('thumb bytes unavailable, using URL', id, e?.message || e);
+          deck.thumbs.set(id, { url, at: now });
+        }
+      }));
       render(true); updateGridThumbs(batch);
     } catch (err) {
       toast('Thumbnails: ' + err.message, true);
@@ -875,8 +966,8 @@
     } finally {
       batch.forEach(id => deck.pending.delete(id));
       deck.busy = false;
-      // first two batches (current/next/upcoming) go out quickly; the rest of the deck trickles so we never hammer the bridge
-      if (deck.queue.length) setTimeout(pumpThumbs, DEMO ? 30 : (deck.batches <= 2 ? 250 : 1500));
+      updateSlidesPill();
+      if (deck.queue.length) setTimeout(pumpThumbs, DEMO ? 30 : 400);   // steady one-call-at-a-time pace until the whole deck is stored
     }
   }
 
@@ -907,8 +998,8 @@
   for (const $img of [$curImg, $nextImg]) {
     $img.addEventListener('load', () => $img.classList.add('ready'));
     $img.addEventListener('error', () => {   // expired URL → drop it and refetch
-      const id = [...deck.thumbs.entries()].find(([, v]) => v.url === $img.dataset.url)?.[0];
-      if (id) { deck.thumbs.delete(id); scheduleThumbs(); }
+      const hit = [...deck.thumbs.entries()].find(([, v]) => v.url === $img.dataset.url);
+      if (hit) { if (hit[1].local) URL.revokeObjectURL(hit[1].url); deck.thumbs.delete(hit[0]); if (deck.cacheKey) cacheDeletePrefix(deck.cacheKey + hit[0]); scheduleThumbs(); }
     });
   }
 
@@ -1322,9 +1413,24 @@
     try { localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_UI); } catch { /* ignore */ }
     location.href = location.pathname;
   });
+  $('btnClearCache').addEventListener('click', async () => {
+    await cacheClearAll();
+    for (const t of deck.thumbs.values()) if (t.local && t.url) URL.revokeObjectURL(t.url);
+    deck.thumbs.clear(); deck.queue = [];
+    render(); buildGrid(); scheduleThumbs(); updateSlidesPill(); updateKv();
+    toast('Slide cache cleared — downloading again');
+  });
+  async function updateCacheLine() {
+    const el = $('kvCache'); if (!el) return;
+    if (DEMO || !deck.cacheKey) { el.textContent = 'off'; return; }
+    const st = await cacheStats(deck.cacheKey);
+    const have = cachedCount(), total = deck.slides.length;
+    el.textContent = `${have} of ${total} slides stored locally` + (st ? ` (${(st.bytes / 1048576).toFixed(1)} MB on disk)` : ' (IndexedDB unavailable — images expire after 30 min)');
+  }
   function updateKv() {
     const l = normalizeOntime(cfg.ontime);
-    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' + (deck.bridge ? ` v${deck.bridge.version}${deck.bridge.slidesApi === false ? ' · Slides API service NOT enabled' : ''}` : '') : 'API key'}<br><b>Notes formatting:</b> ${DEMO ? 'demo' : !deck.slides.length ? 'deck not loaded yet' : !deck.slides.some(s => s.notesEls || s.rich) ? 'plain text only — bridge needs Code.gs v3 and a new deployment version' : `received from Google · ${deck.slides.filter(slideHasStyle).length} of ${deck.slides.length} slides have styled notes`}<br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
+    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' + (deck.bridge ? ` v${deck.bridge.version}${deck.bridge.slidesApi === false ? ' · Slides API service NOT enabled' : ''}` : '') : 'API key'}<br><b>Notes formatting:</b> ${DEMO ? 'demo' : !deck.slides.length ? 'deck not loaded yet' : !deck.slides.some(s => s.notesEls || s.rich) ? 'plain text only — bridge needs Code.gs v3 and a new deployment version' : `received from Google · ${deck.slides.filter(slideHasStyle).length} of ${deck.slides.length} slides have styled notes`}<br><b>Slide cache:</b> <span id="kvCache">…</span><br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
+    updateCacheLine();
   }
 
   /* ---------- Boot ---------- */
