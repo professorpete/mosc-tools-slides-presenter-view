@@ -148,6 +148,10 @@ Quick check of the bridge in a browser tab: `…/exec?action=ping&token=YOURTOKE
 
 Open Settings (`S`) and click **Test bridge & notes formatting**. The report shows the bridge version, whether the Slides API service is enabled, how many slides carry formatting data, and an example styled run — plus the fix for whatever it finds. The info block above it also shows **Bridge vN** and **Notes formatting**. If it says the bridge is v1 or v2, the deployed Apps Script is old: open the script, replace the code with the current `bridge/Code.gs`, then **Deploy → Manage deployments → ✎ → Version: New version → Deploy**. Saving the file is not enough — Apps Script only serves the code that was in the last *deployment*. Reload the presenter view afterwards (a hard refresh, `Ctrl`+`F5`, if you use the hosted copy).
 
+### Everything hangs, even the ping ("No reply within … s")
+
+A ping does no work, so if it hangs the script itself is stuck: Apps Script allows about 30 simultaneous executions per user, and a slow deck request that gets retried piles up until nothing answers. Close every presenter tab for about 6 minutes (the maximum run time of a stuck execution), then open **Executions** in the Apps Script editor (clock icon, left sidebar). It lists every call with its duration and error — that is the ground truth. From 1.3.1 the presenter never overlaps deck requests and backs off after failures, so this should not recur.
+
 ### Bridge URL gives "Sorry, unable to open the file" / 404
 
 Google sometimes shows the web-app URL as `https://script.google.com/macros/**u/1/**s/…/exec`. That account-scoped form only works in the browser profile that owns the script and 404s everywhere else. Delete the `u/1/` so it reads `https://script.google.com/macros/s/…/exec`. (The presenter now does this for you when you paste.) Also make sure it ends in `/exec`, not `/dev`.
@@ -156,6 +160,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.3.1** — deck requests never overlap and back off (20→120 s) after failures, so a slow bridge can't exhaust Apps Script execution slots; Test report shows which path the bridge used and why the fast path failed, if it did. Bridge v4: reports `via`/`fastError`/`ms`, and the SlidesApp fallback skips per-run formatting on decks over 40 slides.
 - **1.3.0** — Countdown card shows Ontime's **Next** cue (cue number, title, planned duration) under the current one; the time-of-day clock moved to the header pills.
 - **1.2.3** — bridge URL field accepts and normalises `…/macros/u/1/s/…/exec` and `/dev` URLs to the universal `/macros/s/…/exec` form.
 - **1.2.2** — "Test bridge & notes formatting" button in Settings produces a plain-language diagnostic report.

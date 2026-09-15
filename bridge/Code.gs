@@ -28,7 +28,8 @@
 
 var TOKEN = 'CHANGE-ME-to-a-long-random-string';
 var TEST_DECK_ID = '';          // optional: paste a presentation ID here for the test() run
-var MAX_THUMBS_PER_CALL = 8;    // keeps each request well under the 6-minute script limit
+var MAX_THUMBS_PER_CALL = 8;
+var MAX_RICH_SLOW = 40;             // SlidesApp fallback only extracts notes formatting for decks up to this many slides    // keeps each request well under the 6-minute script limit
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
@@ -37,7 +38,7 @@ function doGet(e) {
     if (p.token !== TOKEN) throw new Error('Bad token');
     switch (p.action) {
       case 'ping':
-        return json_({ ok: true, user: Session.getEffectiveUser().getEmail(), version: 3, slidesApi: typeof Slides !== 'undefined' });
+        return json_({ ok: true, user: Session.getEffectiveUser().getEmail(), version: 4, slidesApi: typeof Slides !== 'undefined' });
       case 'deck':
         return json_(getDeck_(p.id));
       case 'thumbs':
@@ -59,10 +60,16 @@ function json_(obj) {
  *  Fallback: SlidesApp, which needs ~3 round-trips per slide and can take 30 s+ on a big deck. */
 function getDeck_(id) {
   if (!id) throw new Error('Missing deck id');
+  var t0 = Date.now(), fastError = null;
   if (typeof Slides !== 'undefined') {
-    try { return getDeckFast_(id); } catch (err) { Logger.log('fast path failed, falling back: ' + err); }
+    try { var d = getDeckFast_(id); d.ms = Date.now() - t0; return d; }
+    catch (err) { fastError = String(err && err.message || err); Logger.log('fast path failed, falling back: ' + fastError); }
+  } else {
+    fastError = 'Google Slides API service is not enabled in this script (Services + → Google Slides API)';
   }
-  return getDeckSlow_(id);
+  var out = getDeckSlow_(id);
+  out.fastError = fastError; out.ms = Date.now() - t0;
+  return out;
 }
 
 function getDeckFast_(id) {
@@ -88,11 +95,13 @@ function getDeckFast_(id) {
 
 function getDeckSlow_(id) {
   var pres = SlidesApp.openById(id);
-  var slides = pres.getSlides().map(function (s, i) {
+  var all = pres.getSlides();
+  var wantRich = all.length <= MAX_RICH_SLOW;          // per-run formatting is slow via SlidesApp; keep big decks fast
+  var slides = all.map(function (s, i) {
     var notes = '', rich = null;
     try {
       var shape = s.getNotesPage().getSpeakerNotesShape();
-      if (shape) { notes = shape.getText().asString(); rich = richFromTextRange_(shape.getText()); }
+      if (shape) { notes = shape.getText().asString(); if (wantRich) rich = richFromTextRange_(shape.getText()); }
     } catch (ignored) { /* slide without a notes shape */ }
     return { id: s.getObjectId(), index: i + 1, notes: notes.replace(/\s+$/, ''), rich: rich, skipped: s.isSkipped() };
   });

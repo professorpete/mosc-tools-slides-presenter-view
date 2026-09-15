@@ -472,7 +472,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.3.0';
+  const BUILD = '1.3.1';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -681,7 +681,7 @@
       return { title: j.title || 'Untitled', revisionId: j.revisionId, slides, ar: (w && h) ? w / h : 16 / 9 };
     }
     const j = await getJson(bridgeUrl('deck'), 90_000);
-    return { title: j.title || 'Untitled', revisionId: j.revisionId || null, slides: j.slides || [], ar: (j.width && j.height) ? j.width / j.height : 16 / 9 };
+    return { title: j.title || 'Untitled', revisionId: j.revisionId || null, slides: j.slides || [], ar: (j.width && j.height) ? j.width / j.height : 16 / 9, via: j.via, fastError: j.fastError, ms: j.ms };
   }
 
   async function fetchThumbs(ids) {
@@ -705,11 +705,14 @@
     deck.pos = Math.max(0, Math.min(deck.pos, deck.order.length - 1));
   }
 
-  let deckTimer = null;
+  let deckTimer = null, deckInFlight = false, deckFails = 0;
   async function loadDeck(isRefresh) {
+    if (deckInFlight) return;                       // never stack requests on a slow bridge — that is how Apps Script runs out of execution slots
+    deckInFlight = true;
     if (!isRefresh) { setPill($pillSlides, $pillSlidesText, 'Loading deck…', 'busy'); $curSlide.classList.add('loading'); }
     try {
       const meta = await fetchDeckMeta();
+      deckFails = 0; deck.lastMeta = { via: meta.via, fastError: meta.fastError, ms: meta.ms };
       const changed = deck.revisionId && meta.revisionId && meta.revisionId !== deck.revisionId;
       const currentId = deck.order.length ? deck.slides[deck.order[deck.pos]]?.id : null;
       deck.title = meta.title; deck.slides = meta.slides; deck.ar = meta.ar; deck.revisionId = meta.revisionId; $curSlide.classList.remove('err');
@@ -727,10 +730,13 @@
       setPill($pillSlides, $pillSlidesText, 'Slides error', '');
       if (!deck.slides.length) { $curSlide.classList.remove('loading'); $curSlide.classList.add('err'); $curSlide.querySelector('.ph span').textContent = 'Could not load deck — ' + err.message + ' (retrying…)'; }
       toast('Google Slides: ' + err.message, true);
+      deckInFlight = false; deckFails++;
       clearTimeout(deckTimer);
-      if (!DEMO) deckTimer = setTimeout(() => loadDeck(!!deck.slides.length), 20_000);
+      const backoff = Math.min(120_000, 20_000 * Math.pow(2, Math.min(deckFails - 1, 3)));   // 20 s → 40 → 80 → 120 s
+      if (!DEMO) deckTimer = setTimeout(() => loadDeck(!!deck.slides.length), backoff);
       return;
     }
+    deckInFlight = false;
     clearTimeout(deckTimer);
     if (!DEMO) deckTimer = setTimeout(() => { if (!document.hidden) loadDeck(true); else deckTimer = setTimeout(() => loadDeck(true), 15_000); }, 90_000);
   }
@@ -765,11 +771,15 @@
     if (cfg.mode === 'bridge') {
       const t0 = performance.now();
       try {
-        const p = await getJson(bridgeUrl('ping'), 20_000);
+        const p = await getJson(bridgeUrl('ping'), 45_000);
         deck.bridge = p;
         put(`Ping: OK in ${Math.round(performance.now() - t0)} ms — bridge v${p.version || 1}, runs as ${p.user || '?'}, Slides API service ${p.slidesApi === false ? 'NOT enabled (slow fallback in use)' : 'enabled'}`);
         if ((p.version || 1) < 3) put('→ The deployed bridge is older than v3. Paste the current Code.gs, then Deploy → Manage deployments → ✎ → New version → Deploy.');
-      } catch (e) { put(`Ping: FAILED — ${e.message}`); return; }
+      } catch (e) {
+        put(`Ping: FAILED — ${e.message}`);
+        put('→ A ping does no work, so a hang here means the script is out of execution slots (earlier deck requests still running) or the deployment is not "Anyone". Close every presenter tab for 6 minutes, then in the Apps Script editor open Executions (clock icon, left sidebar) to see what is running or failing.');
+        return;
+      }
     }
     const t1 = performance.now();
     try {
@@ -778,6 +788,8 @@
       const withPayload = meta.slides.filter(s => s.notesEls || s.rich).length;
       const styled = meta.slides.filter(slideHasStyle).length;
       put(`Deck: OK in ${Math.round(performance.now() - t1)} ms — "${meta.title}", ${meta.slides.length} slides, ${withNotes} with notes`);
+      if (meta.via) put(`Bridge read the deck via ${meta.via === 'api' ? 'the Slides API (fast path)' : 'SlidesApp (slow fallback)'}${meta.ms ? ' in ' + meta.ms + ' ms on the server' : ''}`);
+      if (meta.fastError) put(`→ Fast path failed: ${meta.fastError}`);
       put(`Formatting payload: ${withPayload} slides carry formatting data, ${styled} of them have explicit styles (bold/size/colour/bullets)`);
       if (!withPayload) put('→ No formatting data in the response. The bridge that answered is not v3 — redeploy a NEW VERSION of the Apps Script (saving is not enough).');
       else if (!styled && withNotes) put('→ Formatting data arrived but Google reports no explicit styles on any note. Styles only come through when set directly on the text in the notes pane (select text → bold / size / colour). Text inheriting from the theme has no style to send.');
