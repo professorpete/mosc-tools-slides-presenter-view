@@ -101,6 +101,8 @@
   .pill.demo .dot { background: var(--warn); }
   .pill.bad { border-color: var(--danger); color: var(--danger); }
   .pill.bad .dot { background: var(--danger) !important; }
+  .pill.live .dot { background: var(--good); animation: live-dot 1.6s ease-in-out infinite; }
+  @keyframes live-dot { 0%, 100% { box-shadow: 0 0 0 0 rgba(53, 218, 140, .55); } 60% { box-shadow: 0 0 0 5px rgba(53, 218, 140, 0); } }
   #btnSync { margin-right: 2px; }
   #btnSync.spin svg { animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -436,6 +438,12 @@
     </div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dSkip" checked /> Skip hidden slides</label></div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dCursor" /> Hide mouse cursor after 3 s idle</label></div>
+    <div class="field" id="dFollowFields" style="border-top:1px solid var(--line);padding-top:12px;margin-top:4px">
+      <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dFollow" checked /> Follow the live show</label>
+      <div style="font-size:12px;color:var(--dim);margin:4px 0 8px 28px;line-height:1.45">The <b>Presenter View Follow</b> Chrome extension on the playback laptop reports the slide on screen through the bridge. This view then moves only when the show moves — builds and animations no longer count as slides.</div>
+      <label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400;margin-left:28px"><input type="checkbox" id="dFollowKeys" /> Still let arrow keys / clicker move this view while following</label>
+      <div style="font-size:12px;color:var(--dim);margin:4px 0 0 56px;line-height:1.45">Leave off when one clicker (Perfect Cue etc.) hits both laptops, or builds will push this view ahead. Number + Enter, Home/End and the grid always work.</div>
+    </div>
     <div class="field"><label style="display:flex;align-items:center;gap:10px;text-transform:none;letter-spacing:0;font-size:14px;color:var(--fg);font-weight:400"><input type="checkbox" id="dFmt" checked /> Keep Google Slides notes formatting (sizes, bold, bullets, colours)</label></div>
     <div class="setup-error" id="drawerError"></div>
     <div class="setup-actions">
@@ -485,7 +493,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.5.0';
+  const BUILD = '1.6.0';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -565,7 +573,7 @@
     $notes.appendChild(frag);
   }
 
-  const DEFAULTS = { slides: '', ontime: '', mode: 'bridge', bridge: '', token: '', key: '', timer: 'main', skip: true, cursor: false };
+  const DEFAULTS = { slides: '', ontime: '', mode: 'bridge', bridge: '', token: '', key: '', timer: 'main', skip: true, cursor: false, follow: true, followKeys: false };
   let cfg = { ...DEFAULTS };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(LS_KEY) || '{}')); } catch { /* ignore */ }
   for (const k of ['slides', 'ontime', 'bridge', 'token', 'key', 'timer']) if (params.get(k)) cfg[k] = params.get(k);
@@ -755,7 +763,59 @@
     if (DEMO) { setPill($pillSlides, $pillSlidesText, 'Demo deck', 'demo'); return; }
     const total = deck.slides.length, have = cachedCount();
     if (total && have < total && (deck.queue.length || deck.busy || deck.pumpSoon)) setPill($pillSlides, $pillSlidesText, `Caching slides ${have}/${total}`, 'busy');
-    else { const real = deck.realCount || total; setPill($pillSlides, $pillSlidesText, `Slides · ${real}` + (real < total ? ` · ${total - real} builds` : ''), 'ok'); }
+    else { const real = deck.realCount || total; setPill($pillSlides, $pillSlidesText, `Slides · ${real}` + (real < total ? ` · ${total - real} builds` : '') + (live.active ? ' · LIVE' : ''), live.active ? 'ok live' : 'ok'); }
+  }
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  /* ---------- Follow the live show (bridge relay fed by the Chrome extension) ---------- */
+  const live = { gen: 0, since: 0, slide: null, at: 0, active: false, pendingSlide: null, otherDeck: false, nudgeT: 0 };
+  function followStart() {
+    live.gen++;
+    live.active = false; live.pendingSlide = null; live.otherDeck = false;
+    updateSlidesPill();
+    if (DEMO || cfg.mode !== 'bridge' || !cfg.follow || !cfg.bridge) return;
+    followLoop(live.gen);
+  }
+  async function followLoop(gen) {
+    let backoff = 3000;
+    while (gen === live.gen) {
+      if (!deck.slides.length) { await sleep(1000); continue; }
+      let j;
+      try { j = await getJsonOnce(bridgeUrl('current', { since: live.since, wait: 25 }), 40_000); }
+      catch (e) {
+        if (gen !== live.gen) return;
+        logErr('Follow', e.message || String(e));
+        await sleep(backoff); backoff = Math.min(backoff * 2, 30_000); continue;
+      }
+      if (gen !== live.gen) return;
+      backoff = 3000;
+      if (j && !j.ok && /Unknown action/i.test(j.error || '')) { logErr('Follow', 'Bridge is an older version — paste the new bridge/Code.gs into Apps Script and make a new deployment to follow the live show'); return; }
+      if (!j || !j.ok) { logErr('Follow', (j && j.error) || 'bad reply'); await sleep(backoff); continue; }
+      const l = j.live;
+      if (l && l.at > live.since) { live.since = l.at; applyLive(l); }
+    }
+  }
+  function applyLive(l) {
+    if (l.deck && deck.id && l.deck !== deck.id) {
+      if (!live.otherDeck) { live.otherDeck = true; logErr('Follow', `Playback laptop is presenting a different deck (${l.deck.slice(0, 12)}…) — not following it`); }
+      return;
+    }
+    live.otherDeck = false;
+    live.slide = l.slide; live.at = l.at;
+    const wasActive = live.active; live.active = true;
+    if (!wasActive) { updateSlidesPill(); toast('Following the live show'); }
+    if (deck.slides.some(s => s.id === l.slide)) { live.pendingSlide = null; gotoSlideId(l.slide, true); }
+    else {
+      // Unknown slide id: the deck was probably edited since we loaded it. Refresh once, then land on it.
+      live.pendingSlide = l.slide;
+      logErr('Follow', `Show is on slide "${l.slide}" which this view does not know — refreshing the deck`);
+      loadDeck(true).then(() => { if (live.pendingSlide && deck.slides.some(s => s.id === live.pendingSlide)) { gotoSlideId(live.pendingSlide, true); live.pendingSlide = null; } });
+    }
+  }
+  function liveNudge() {
+    // Clicker press swallowed on purpose: show a whisper so nobody thinks the keyboard died.
+    $jumpBuf.textContent = 'following live';
+    clearTimeout(live.nudgeT); live.nudgeT = setTimeout(() => { if ($jumpBuf.textContent === 'following live') $jumpBuf.textContent = ''; }, 1200);
   }
 
   function bridgeUrl(action, extra) {
@@ -1358,8 +1418,11 @@
     if ($drawer.classList.contains('on')) { if (e.key === 'Escape') closeDrawer(); return; }
     if ($setup.classList.contains('on')) return;
     const k = e.key;
-    if (k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown' || k === ' ' || k === 'Enter' && !jump) { e.preventDefault(); next(); return; }
-    if (k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp' || k === 'Backspace') { e.preventDefault(); prev(); return; }
+    const navNext = k === 'ArrowRight' || k === 'ArrowDown' || k === 'PageDown' || k === ' ' || k === 'Enter' && !jump;
+    const navPrev = k === 'ArrowLeft' || k === 'ArrowUp' || k === 'PageUp' || k === 'Backspace';
+    if ((navNext || navPrev) && live.active && !cfg.followKeys) { e.preventDefault(); liveNudge(); return; }   // the clicker hits both laptops — the show decides
+    if (navNext) { e.preventDefault(); next(); return; }
+    if (navPrev) { e.preventDefault(); prev(); return; }
     if (k === 'Home') { e.preventDefault(); gotoPos(0); return; }
     if (k === 'End') { e.preventDefault(); gotoPos(deck.order.length - 1); return; }
     if (/^\d$/.test(k) || (jump && /^\d+$/.test(jump) && /^[a-zA-Z]$/.test(k))) { jump += k.toUpperCase(); $jumpBuf.textContent = '→ ' + jump; clearTimeout(jumpT); jumpT = setTimeout(() => { jump = ''; $jumpBuf.textContent = ''; }, 2500); return; }
@@ -1448,13 +1511,13 @@
     $(P + 'Slides').value = cfg.slides; $(P + 'Ontime').value = cfg.ontime; $(P + 'Timer').value = cfg.timer;
     $(P + 'Bridge').value = cfg.bridge; $(P + 'Token').value = cfg.token; $(P + 'Key').value = cfg.key; $(P + 'Skip').checked = !!cfg.skip;
     segSet($(P + 'Mode'), cfg.mode, $(P === 'f' ? 'bridgeFields' : 'dBridgeFields'), $(P === 'f' ? 'keyFields' : 'dKeyFields'));
-    if (P === 'd') { $('dCursor').checked = !!cfg.cursor; $('dFmt').checked = !!ui.notesFmt; }
+    if (P === 'd') { $('dCursor').checked = !!cfg.cursor; $('dFmt').checked = !!ui.notesFmt; $('dFollow').checked = !!cfg.follow; $('dFollowKeys').checked = !!cfg.followKeys; $('dFollowFields').style.display = cfg.mode === 'bridge' ? '' : 'none'; }
   }
   function readForm(prefix, $err) {
     const P = prefix;
     const c = { ...cfg, slides: $(P + 'Slides').value.trim(), ontime: $(P + 'Ontime').value.trim(), timer: $(P + 'Timer').value, mode: segValue($(P + 'Mode')),
       bridge: $(P + 'Bridge').value.trim(), token: $(P + 'Token').value.trim(), key: $(P + 'Key').value.trim(), skip: $(P + 'Skip').checked };
-    if (P === 'd') { c.cursor = $('dCursor').checked; if (ui.notesFmt !== $('dFmt').checked) { ui.notesFmt = $('dFmt').checked; saveUi(); render(); } }
+    if (P === 'd') { c.cursor = $('dCursor').checked; c.follow = $('dFollow').checked; c.followKeys = $('dFollowKeys').checked; if (ui.notesFmt !== $('dFmt').checked) { ui.notesFmt = $('dFmt').checked; saveUi(); render(); } }
     const d = extractDeckId(c.slides);
     if (d.error) return fail($err, d.error);
     if (c.mode === 'bridge') {
@@ -1476,6 +1539,7 @@
     deck.slides = []; deck.order = []; deck.pos = 0; deck.thumbs.clear(); deck.queue = []; deck.revisionId = null;
     if (DEMO) { deck.id = 'demo'; demoOntime(); } else otStart();
     loadDeck(false);
+    followStart();
     updateKv();
   }
 
@@ -1498,6 +1562,7 @@
     if (DEMO) { const p = new URLSearchParams(location.search); p.delete('demo'); location.search = p.toString(); return; }
     if (deckChanged) { deck.pos = 0; deck.thumbs.clear(); deck.revisionId = null; deck.id = extractDeckId(cfg.slides).id; loadDeck(false); }
     if (otChanged) otStart();
+    followStart();
     updateKv(); toast('Settings applied');
   });
   $('btnReset').addEventListener('click', () => {

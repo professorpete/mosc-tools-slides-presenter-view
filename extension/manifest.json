@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Presenter View Follow (mosc-tools)",
+  "version": "1.0.0",
+  "description": "Reports the slide currently on screen in Google Slides to the mosc-tools Presenter View bridge, so the presenter view follows the live show.",
+  "permissions": ["storage"],
+  "host_permissions": ["https://script.google.com/*", "https://script.googleusercontent.com/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{ "matches": ["https://docs.google.com/presentation/*"], "js": ["content.js"], "run_at": "document_idle", "all_frames": true }],
+  "action": { "default_popup": "popup.html", "default_title": "Presenter View Follow" },
+  "icons": { "16": "icon16.png", "48": "icon48.png", "128": "icon128.png" }
+}

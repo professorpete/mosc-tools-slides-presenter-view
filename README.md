@@ -7,6 +7,7 @@ and a dark/light theme. One HTML file. No install, no build. Double-click and go
 ```
 Mosc-tools--Presenter-View.html   ← the whole app
 bridge/Code.gs                    ← small Apps Script that reads private decks as you
+extension/                        ← Chrome extension for the playback laptop (follow mode)
 ```
 
 Hosted copy: [moscone.ca/sheetspresenter.html](https://moscone.ca/sheetspresenter.html) (Ontime Cloud only — see Network notes).
@@ -73,18 +74,47 @@ the **Google Slides API** enabled and pick *API key* on the setup screen. It can
 
 ## Keeping it in sync with the live show
 
-Google does not expose "which slide is on screen right now" — not in the Slides API, not in Apps Script (only the editor's
-selection, and nothing at all in present mode). So the view is driven like a stage manager follows a script:
+Google does not expose "which slide is on screen right now" — not in the Slides API, not in Apps Script. Two ways to stay together:
 
-- **Arrow keys / space / PageUp-Down / Home / End** step through. **Type a number + Enter** jumps. Mouse wheel over the current slide works too.
+### Follow mode (recommended — behaves like Google's own speaker view)
+
+A tiny Chrome extension on the **playback laptop** watches the presenting tab. Google writes the current slide ID into that tab's URL,
+and it changes only on a real slide change — never on a build/animation click. The extension sends that ID to your bridge, and the
+presenter view waits on the bridge and jumps when it changes. Builds, videos and transitions all run natively on the show machine, and
+this view moves only when the show moves.
+
+Setup (once):
+
+1. **Bridge**: paste the new `bridge/Code.gs` over your Apps Script project and create a new deployment (Deploy → Manage deployments →
+   edit → New version). `ping` should now say version 5.
+2. **Extension** (playback laptop, Chrome/Edge/Brave): unzip `extension/`, open `chrome://extensions`, turn on *Developer mode*,
+   *Load unpacked*, pick the folder. Click its toolbar icon and paste the same bridge URL and token the presenter uses. Pin it if you
+   want to see the "sent ✓" status.
+3. **Presenter view**: Settings → *Follow the live show* is on by default in bridge mode. The Slides pill shows **LIVE** once the
+   first slide arrives.
+
+While following, arrow keys / space / PageUp-Down on the presenter machine are ignored on purpose (a whisper "following live"
+appears bottom-centre). That matters when a single clicker such as a Perfect Cue fires both laptops: builds consume presses on the
+show machine but would push this view ahead. Number + Enter, Home/End, the grid and the mouse still work, and the next slide change
+from the show snaps the view back. If you want the arrows live anyway (two clickers, or a human calling), tick
+*Still let arrow keys / clicker move this view while following*.
+
+Latency is about a second (extension 0.25 s + Apps Script). Only the slide ID travels; nothing from the deck. The presenter keeps
+one request open to the bridge for up to 25 s at a time and it returns as soon as the slide changes, so it is one call per slide
+change plus one every 25 s, not a poll storm. If the show laptop is presenting a different deck the view says so in
+*Problems this session* and does not follow it. The extension can also follow the editor (edit view) — tick it in the popup; handy
+for rehearsal.
+
+### Manual mode
+
+- **Arrow keys / space / PageUp-Down / Home / End** step through. **Type a number + Enter** jumps (`7B` + Enter for a build step). Mouse wheel over the current slide works too.
 - A USB clicker is just arrow keys — plug it into the machine running this page.
 - **Program output** (`O`) opens a second window with the full-res current slide. Drag it to the projector display,
   double-click for fullscreen, and this page becomes the whole playback system (no transitions/video/animation — static slides only).
   Arrow keys work in either window; `B` blacks the output.
 - **External control hook** — any script or extension can drive it:
-  `window.postMessage({ type: 'mosc-presenter', action: 'goto', index: 12 }, '*')` (also `slideId`, `delta`, `next`, `prev`, `black`),
-  or change the URL hash to `#12` / `#slide=id.g1234abcd`. The `slide=id.…` form matches the hash Google puts in the presenting tab's URL,
-  so a ~30-line browser extension watching the presenting tab can keep this view locked to the real show.
+  `window.postMessage({ type: 'mosc-presenter', action: 'goto', index: 12 }, '*')` (also `slideId`, `delta`, `next`, `prev`, `black`, `label`),
+  or change the URL hash to `#12` / `#7B` / `#slide=id.g1234abcd`.
 
 ## URL parameters
 
@@ -178,6 +208,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.6.0** — follow the live show. New `extension/` (Chrome, load unpacked on the playback laptop) reports the on-screen slide to the bridge; bridge v5 adds `setCurrent` / long-poll `current` (CacheService only). Presenter: *Follow the live show* setting (default on in bridge mode), LIVE pill, arrows/clicker ignored while following unless allowed, unknown slide → deck refresh, other-deck guard, old-bridge notice. Fixes drift when one clicker (Perfect Cue) fires both laptops and builds eat presses on the show machine.
 - **1.5.0** — build steps. Google's API renders each slide as one flat image with every animation already played, so click-builds can't be shown. Duplicate the slide once per step instead, and put `[build]` in the speaker notes of each continuation slide: the presenter numbers them 7, 7A, 7B… and the next real slide stays 8 (the total counts real slides only). A continuation slide whose notes contain only `[build]` shows the base slide's notes. Type `7B` + Enter (or `#7B` in the URL) to jump to a step; the grid and Next card show the same labels. Slides pill reads e.g. "Slides · 24 · 3 builds".
 - **1.4.2** — overtime timer no longer blinks to black: it pulses gently between red and light red while counting up.
 - **1.4.1** — show-safe error handling: problems (deck/thumbnail time-outs, bridge version) no longer pop up on screen; they go to a "Problems this session" log in Settings and the Slides pill quietly turns red until you open Settings. New sync button (↻, left of the Slides pill, or `R`) re-reads notes and slide order from Google Slides and re-downloads every image, while keeping the old images on screen until the new ones arrive. Fixed square boxes in speaker notes: Google Slides stores Shift+Enter as a vertical-tab character (U+000B) that Chrome draws as a box — now rendered as a line break; PowerPoint-import Wingdings bullets are mapped to normal bullets.

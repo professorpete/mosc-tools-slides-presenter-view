@@ -6,6 +6,9 @@
  *   • the slide list (ids, order, hidden flag) and speaker notes, with their formatting
  *   • slide images (Slides API thumbnails, 1600 px wide, ~30 min URLs)
  *   • the deck's revisionId so the view can notice edits
+ *   • (v5) a live-slide relay: the "Presenter View Follow" Chrome extension on the
+ *     playback machine reports which slide is on screen; the presenter view waits
+ *     on it and follows. Builds/animations run natively in Google Slides.
  *
  * Same pattern as the BenchBoss / Shiftbook sheet bridge: token-protected,
  * deployed from your own Google account, so any deck you can open, it can read.
@@ -34,6 +37,7 @@
 var TOKEN = 'CHANGE-ME-to-a-long-random-string';
 var TEST_DECK_ID = '';          // optional: paste a presentation ID here for the test() run
 var MAX_THUMBS_PER_CALL = 8;
+var LIVE_WAIT_MAX = 25;             // seconds a 'current' request may be held open waiting for a slide change
 var MAX_RICH_SLOW = 40;             // SlidesApp fallback only extracts notes formatting for decks up to this many slides    // keeps each request well under the 6-minute script limit
 
 function doGet(e) {
@@ -44,17 +48,42 @@ function doGet(e) {
     switch (p.action) {
       case 'ping':
         var who = null; try { who = Session.getEffectiveUser().getEmail(); } catch (ignored) { /* not authorized yet — ping still answers */ }
-        return json_({ ok: true, user: who, version: 4, slidesApi: typeof Slides !== 'undefined', authorized: !!who });
+        return json_({ ok: true, user: who, version: 5, slidesApi: typeof Slides !== 'undefined', authorized: !!who });
       case 'deck':
         return json_(getDeck_(p.id));
       case 'thumbs':
         return json_(getThumbs_(p.id, String(p.pages || '').split(',').filter(String), p.size || 'LARGE'));
+      case 'setCurrent':                                   // called by the Follow extension on every slide change
+        return json_(setCurrent_(p.deck, p.slide, p.from));
+      case 'current':                                      // called by the presenter view; holds until the slide changes
+        return json_(getCurrent_(Number(p.since) || 0, Number(p.wait) || 0));
       default:
         throw new Error('Unknown action "' + p.action + '"');
     }
   } catch (err) {
     return json_({ ok: false, error: String((err && err.message) || err) });
   }
+}
+
+/* ---------- Live-slide relay (CacheService, nothing is written to Drive) ---------- */
+function setCurrent_(deck, slide, from) {
+  if (!slide) throw new Error('Missing slide');
+  var state = { deck: deck || null, slide: String(slide), at: Date.now(), from: from || null };
+  CacheService.getScriptCache().put('live', JSON.stringify(state), 6 * 3600);
+  return { ok: true, at: state.at };
+}
+function readLive_() {
+  var raw = CacheService.getScriptCache().get('live');
+  return raw ? JSON.parse(raw) : null;
+}
+function getCurrent_(since, wait) {
+  var until = Date.now() + Math.min(Math.max(wait, 0), LIVE_WAIT_MAX) * 1000;
+  var live = readLive_();
+  while ((!live || live.at <= since) && Date.now() < until) {
+    Utilities.sleep(500);
+    live = readLive_();
+  }
+  return { ok: true, live: live, now: Date.now() };
 }
 
 function json_(obj) {
