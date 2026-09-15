@@ -157,9 +157,13 @@
   #tmsg { display: none; margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--warn); color: #111; font-weight: 700; font-size: clamp(13px, 1.9vh, 19px); line-height: 1.3; }
   #tmsg.on { display: block; }
   #tmsg.blink { animation: blink 1s steps(2, start) infinite; }
-  #clockRow { display: flex; align-items: baseline; justify-content: space-between; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
-  #clock { font-size: clamp(16px, 2.6vh, 28px); font-weight: 700; font-variant-numeric: tabular-nums; }
-  #clock small { font-size: .55em; color: var(--dim); margin-left: 4px; }
+  #nextRow { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+  #nextLine { display: flex; align-items: center; gap: 10px; margin-top: 6px; min-height: 1.4em; font-size: clamp(13px, 1.8vh, 18px); color: var(--dim-strong); }
+  #nextLine .chip { flex: none; font-size: .78em; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: var(--accent); color: #fff; letter-spacing: .04em; min-width: 2.4em; text-align: center; opacity: .85; }
+  #nextLine .title { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #nextLine.empty { color: var(--dim); }
+  .pill.clock { letter-spacing: .06em; text-transform: none; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pill.clock small { font-size: .75em; color: var(--dim); margin-left: 3px; font-weight: 600; }
 
   /* Next card */
   #nextCard { flex: 1 1 0; }
@@ -317,6 +321,7 @@
     <div id="pills">
       <div class="pill" id="pillSlides" title="Google Slides connection"><span class="dot"></span><span id="pillSlidesText">Slides</span></div>
       <div class="pill" id="pillOntime" title="Ontime connection"><span class="dot"></span><span id="pillOntimeText">Ontime</span></div>
+      <div class="pill clock" id="clockPill" title="Time of day (Ontime's clock when connected)"><span id="clock">–:––</span></div>
     </div>
     <div id="tools">
       <button class="tool" id="btnRefresh" title="Reload deck (R)"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg></button>
@@ -346,7 +351,10 @@
           <div class="timer-meta"><span><b>Now</b></span><span id="timerDur"></span></div>
           <div id="cueLine" class="empty"><span class="chip" id="cueChip" style="display:none"></span><span class="title" id="cueTitle">Waiting for Ontime…</span></div>
           <div id="tmsg"></div>
-          <div id="clockRow"><span class="label">Time of day</span><span id="clock">–:––</span></div>
+          <div id="nextRow">
+            <div class="timer-meta"><span><b>Next</b></span><span id="nextDur"></span></div>
+            <div id="nextLine" class="empty"><span class="chip" id="nextChip" style="display:none"></span><span class="title" id="nextTitle">—</span></div>
+          </div>
         </div>
       </section>
 
@@ -464,7 +472,7 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.2.3';
+  const BUILD = '1.3.0';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
@@ -545,6 +553,7 @@
   const $curNum = $('curNum'), $nextNum = $('nextNum'), $notes = $('notes'), $deckTitle = $('deckTitle');
   const $timer = $('timer'), $timerState = $('timerState'), $timerLabel = $('timerLabel'), $timerDur = $('timerDur');
   const $cueChip = $('cueChip'), $cueTitle = $('cueTitle'), $cueLine = $('cueLine'), $tmsg = $('tmsg'), $clock = $('clock');
+  const $nextLine = $('nextLine'), $nextChip = $('nextChip'), $nextTitle = $('nextTitle'), $nextDur = $('nextDur');
   const $pillSlides = $('pillSlides'), $pillSlidesText = $('pillSlidesText');
   const $pillOntime = $('pillOntime'), $pillOntimeText = $('pillOntimeText');
   const $toast = $('toast'), $jumpBuf = $('jumpBuf');
@@ -943,7 +952,7 @@
   /* =========================================================
    * Ontime
    * ========================================================= */
-  const ot = { link: null, ws: null, connected: false, retry: 500, timer: null, timerAt: 0, aux: {}, auxAt: {}, eventNow: null, clock: null, clockAt: 0, message: { timer: {}, secondary: '' } };
+  const ot = { link: null, ws: null, connected: false, retry: 500, timer: null, timerAt: 0, aux: {}, auxAt: {}, eventNow: null, eventNext: null, clock: null, clockAt: 0, message: { timer: {}, secondary: '' } };
 
   function applyStore(p) {
     if (!p || typeof p !== 'object') return;
@@ -951,6 +960,7 @@
     if ('timer' in p && p.timer) { ot.timer = p.timer; ot.timerAt = performance.now(); }
     for (const k of ['auxtimer1', 'auxtimer2', 'auxtimer3']) if (k in p && p[k]) { ot.aux[k] = p[k]; ot.auxAt[k] = performance.now(); }
     if ('eventNow' in p) ot.eventNow = p.eventNow;
+    if ('eventNext' in p) ot.eventNext = p.eventNext;
     if ('message' in p && p.message) {
       const m = p.message;
       ot.message = { timer: { ...ot.message.timer, ...(m.timer || {}) }, secondary: typeof m.secondary === 'string' ? m.secondary : typeof m.external === 'string' ? m.external : ot.message.secondary };
@@ -983,7 +993,7 @@
   function otDisconnect() {
     clearTimeout(otReconnectT); clearTimeout(otOpenTimeout); clearInterval(otPing);
     if (ot.ws) { const w = ot.ws; ot.ws = null; try { w.close(); } catch { /* ignore */ } }
-    ot.connected = false; ot.timer = null; ot.eventNow = null; ot.aux = {}; ot.message = { timer: {}, secondary: '' };
+    ot.connected = false; ot.timer = null; ot.eventNow = null; ot.eventNext = null; ot.aux = {}; ot.message = { timer: {}, secondary: '' };
   }
   function otStart() {
     otDisconnect();
@@ -1047,6 +1057,18 @@
       $cueTitle.textContent = !ot.link ? 'No Ontime link set' : ot.connected ? 'No cue running' : 'Waiting for Ontime…';
     }
 
+    // Next cue (Ontime's eventNext)
+    const nx = ot.eventNext;
+    if (nx && (nx.title || nx.cue)) {
+      $nextLine.classList.remove('empty');
+      $nextChip.style.display = nx.cue ? '' : 'none'; $nextChip.textContent = nx.cue || ''; $nextChip.style.background = nx.colour || '';
+      $nextTitle.textContent = nx.title || 'Untitled cue';
+      $nextDur.textContent = (typeof nx.duration === 'number' && nx.duration > 0) ? fmtMs(nx.duration) : '';
+    } else {
+      $nextLine.classList.add('empty'); $nextChip.style.display = 'none'; $nextDur.textContent = '';
+      $nextTitle.textContent = !ot.link ? '—' : ot.connected ? (ot.eventNow ? 'End of rundown' : '—') : '—';
+    }
+
     // Message to stage
     const mt = ot.message.timer || {};
     const show = !!(mt.visible && mt.text && mt.text.trim());
@@ -1106,6 +1128,7 @@
     setPill($pillOntime, $pillOntimeText, 'Ontime · demo', 'demo');
     ot.link = { http: '', ws: '', label: 'demo' }; ot.connected = true;
     ot.eventNow = { cue: '14', title: 'Keynote — Show Control 101', colour: '#3b82f6' };
+    ot.eventNext = { cue: '15', title: 'Panel — Cueing under pressure', colour: '#35da8c', duration: 25 * 60_000 };
     ot.timer = { current: 4 * 60_000 + 12_000, duration: 20 * 60_000, playback: 'play' }; ot.timerAt = performance.now();
     ot.aux.auxtimer1 = { current: 9 * 60_000, duration: 10 * 60_000, playback: 'start', direction: 'count-down' }; ot.auxAt.auxtimer1 = performance.now();
     setInterval(() => { const l = liveTimerMs(); if (l.ms !== null && l.ms < -20_000) { ot.timer = { ...ot.timer, current: 20 * 60_000 }; ot.timerAt = performance.now(); } }, 1000);

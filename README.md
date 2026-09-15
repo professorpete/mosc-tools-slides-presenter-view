@@ -20,7 +20,7 @@ Download: grab `Mosc-tools--Presenter-View.html` from this repo (Code → Downlo
 - **Current slide** (large, 1600 px image) with slide number / total
 - **Next slide** thumbnail with its number — click it to advance
 - **Speaker notes** for the current slide, with Google's formatting kept — relative font sizes, bold/italic/underline, bullets and indents, coloured text. `A−` / `A+` (or `−` / `+`) scale everything together, so an 18 pt heading stays bigger than 11 pt body text. Turn formatting off in Settings if you'd rather have plain text.
-- **Ontime countdown** — main timer of the running cue, or AUX 1/2/3. Amber under 3 min, red under 1, flashing past zero.
+- **Ontime countdown** with the running cue and the **next** cue (from Ontime's `eventNext`) — main timer of the running cue, or AUX 1/2/3. Amber under 3 min, red under 1, flashing past zero.
   Shows the running cue (number chip in its Ontime colour), "of 20:00" duration, Ontime's *message to stage*, and the show clock.
 - **Dark / light** toggle (`D` or the moon/sun button), remembered per browser
 - **Setup screen** with a box for the Google Slides link and one for the Ontime link (local IP or Ontime Cloud)
@@ -156,6 +156,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.3.0** — Countdown card shows Ontime's **Next** cue (cue number, title, planned duration) under the current one; the time-of-day clock moved to the header pills.
 - **1.2.3** — bridge URL field accepts and normalises `…/macros/u/1/s/…/exec` and `/dev` URLs to the universal `/macros/s/…/exec` form.
 - **1.2.2** — "Test bridge & notes formatting" button in Settings produces a plain-language diagnostic report.
 - **1.2.1** — Settings shows bridge version and whether formatted notes arrived; warns when the bridge is older than v3.
