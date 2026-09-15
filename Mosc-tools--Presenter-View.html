@@ -607,7 +607,9 @@
    * Deck (Google Slides)
    * ========================================================= */
   const deck = {
-    id: null, title: '', slides: [],      // [{ id, index, notes, skipped }]
+    id: null, title: '', slides: [],      // [{ id, index, notes, notesEls|rich, skipped }]
+    bridge: null,                         // { version, slidesApi } from the bridge's ping, bridge mode only
+    fmtWarned: false,
     order: [],                             // indexes into slides[] that are navigable
     pos: 0,                                // position within order[]
     ar: 16 / 9, revisionId: null,
@@ -705,6 +707,7 @@
       setPill($pillSlides, $pillSlidesText, DEMO ? 'Demo deck' : `Slides · ${deck.slides.length}`, DEMO ? 'demo' : 'ok');
       if (!isRefresh) { applyHashStart(); }
       render(); scheduleThumbs(); buildGrid();
+      checkNotesFormatting();
     } catch (err) {
       console.error('deck load failed', err);
       setPill($pillSlides, $pillSlidesText, 'Slides error', '');
@@ -716,6 +719,18 @@
     }
     clearTimeout(deckTimer);
     if (!DEMO) deckTimer = setTimeout(() => { if (!document.hidden) loadDeck(true); else deckTimer = setTimeout(() => loadDeck(true), 15_000); }, 90_000);
+  }
+
+  // Formatted notes need bridge v3+. Tell the operator once if the deployed bridge is older.
+  async function checkNotesFormatting() {
+    if (DEMO || deck.fmtWarned || cfg.mode !== 'bridge') return;
+    deck.fmtWarned = true;
+    try { deck.bridge = await getJson(bridgeUrl('ping'), 20_000); } catch { return; }
+    const v = deck.bridge.version || 1;
+    if (v < 3 && !deck.slides.some(s => s.notesEls || s.rich)) {
+      deck.fmtWarned = true;
+      toast(`Bridge is v${v} — paste the latest Code.gs and Deploy → Manage deployments → New version to get formatted speaker notes`, true);
+    }
   }
 
   function applyHashStart() {
@@ -1167,7 +1182,7 @@
   });
   $('demoBtn').addEventListener('click', () => { const p = new URLSearchParams(location.search); p.set('demo', '1'); location.search = p.toString(); });
 
-  function openDrawer() { fillForm('d'); $drawer.classList.add('on'); $scrim.classList.add('on'); }
+  function openDrawer() { fillForm('d'); updateKv(); $drawer.classList.add('on'); $scrim.classList.add('on'); }
   function closeDrawer() { $drawer.classList.remove('on'); $scrim.classList.remove('on'); }
   $('btnSettings').addEventListener('click', openDrawer); $('drawerClose').addEventListener('click', closeDrawer); $scrim.addEventListener('click', closeDrawer);
   $('drawerForm').addEventListener('submit', (e) => {
@@ -1188,7 +1203,7 @@
   });
   function updateKv() {
     const l = normalizeOntime(cfg.ontime);
-    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' : 'API key'}<br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
+    $('kv').innerHTML = `<b>Deck ID:</b> ${deck.id || '—'}<br><b>Ontime:</b> ${l ? l.ws : 'off'}<br><b>Access:</b> ${DEMO ? 'demo' : cfg.mode === 'bridge' ? 'Apps Script bridge' + (deck.bridge ? ` v${deck.bridge.version}${deck.bridge.slidesApi === false ? ' · Slides API service NOT enabled' : ''}` : '') : 'API key'}<br><b>Notes formatting:</b> ${DEMO ? 'demo' : deck.slides.some(s => s.notesEls || s.rich) ? 'received from Google' : (deck.slides.length ? 'plain text only — bridge needs Code.gs v3 and a new deployment version' : '—')}<br><b>Tip:</b> bookmark this page with <code>?slides=…&amp;ontime=…</code> to auto-start.`;
   }
 
   /* ---------- Boot ---------- */
