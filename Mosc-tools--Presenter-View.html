@@ -99,6 +99,13 @@
   .pill.ok .dot { background: var(--good); }
   .pill.busy .dot { background: var(--warn); }
   .pill.demo .dot { background: var(--warn); }
+  .pill.bad { border-color: var(--danger); color: var(--danger); }
+  .pill.bad .dot { background: var(--danger) !important; }
+  #btnSync { margin-right: 2px; }
+  #btnSync.spin svg { animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #errLog { font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace; color: var(--fg); background: var(--panel-2, rgba(127,127,127,.12)); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; margin-top: 8px; max-height: 220px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #errLog .et { color: var(--dim); } #errLog b { color: var(--danger); } #errLog .en { color: var(--warn); }
   #tools { display: flex; align-items: center; gap: 6px; }
   .tool { width: 38px; height: 38px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; color: var(--dim-strong); border: 1px solid transparent; }
   .tool:hover { background: var(--panel); border-color: var(--border); color: var(--fg); }
@@ -319,12 +326,12 @@
       </div>
     </div>
     <div id="pills">
+      <button class="tool" id="btnSync" title="Sync slides &amp; notes from Google Slides (R)"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg></button>
       <div class="pill" id="pillSlides" title="Google Slides connection"><span class="dot"></span><span id="pillSlidesText">Slides</span></div>
       <div class="pill" id="pillOntime" title="Ontime connection"><span class="dot"></span><span id="pillOntimeText">Ontime</span></div>
       <div class="pill clock" id="clockPill" title="Time of day (Ontime's clock when connected)"><span id="clock">–:––</span></div>
     </div>
     <div id="tools">
-      <button class="tool" id="btnRefresh" title="Reload deck (R)"><svg viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg></button>
       <button class="tool" id="btnGrid" title="All slides (G)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></button>
       <button class="tool" id="btnOutput" title="Open program output window (O)"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg></button>
       <button class="tool" id="btnTheme" title="Dark / light (D)"><svg viewBox="0 0 24 24" id="iconTheme"><path d="M12 3a9 9 0 1 0 9 9c0-.5 0-1-.1-1.4A5.5 5.5 0 0 1 12 3z"/></svg></button>
@@ -436,6 +443,10 @@
     </div>
   </form>
   <div class="kv" id="kv"></div>
+  <div class="kv" style="border-top:0;margin-top:8px;padding-top:0"><b>Problems this session</b> <span style="color:var(--dim)">(never shown on screen during a show — the Slides pill just turns red)</span>
+    <div id="errLog"></div>
+    <button class="btn" type="button" id="btnClearLog" style="font-size:12px;padding:6px 12px;margin-top:8px;background:transparent;color:var(--fg);border:1px solid var(--border)">Clear log</button>
+  </div>
   <div class="kv" style="border-top:0;margin-top:8px;padding-top:0">
     <button class="btn" type="button" id="btnTest" style="font-size:13px;padding:8px 14px;background:transparent;color:var(--fg);border:1px solid var(--border)">Test bridge &amp; notes formatting</button>
     <button class="btn" type="button" id="btnClearCache" style="font-size:13px;padding:8px 14px;margin-left:8px;background:transparent;color:var(--fg);border:1px solid var(--border)">Clear slide cache &amp; re-download</button>
@@ -473,11 +484,23 @@
   const params = new URLSearchParams(location.search);
   const LS_KEY = 'moscPresenter.cfg';
   const LS_UI = 'moscPresenter.ui';
-  const BUILD = '1.4.0';
+  const BUILD = '1.4.1';
 
   /* ---------- Config ---------- */
   /* ---------- Speaker notes: keep Google's formatting ---------- */
   // Turns Slides API textElements (notes BODY placeholder) into paragraphs of styled runs.
+  /* Google Slides stores Shift+Enter as a vertical tab (U+000B) and PowerPoint imports carry Wingdings bullets in the
+     private-use area; Chrome draws both as little boxes. Normalise before anything reaches the DOM. */
+  const CTRL_RE = /[\u0000-\u0008\u000E-\u001F\u007F-\u009F\uFEFF\u200B\u200C\u200D\u2060\uFFFC]/g;
+  function cleanText(t) { return String(t || '').replace(/[\u000B\u000C\u2028\u2029]/g, '\n').replace(/\r\n?/g, '\n').replace(CTRL_RE, ''); }
+  const PUA_GLYPH = { '\uF0B7': '•', '\uF0A7': '▪', '\uF0A8': '◻', '\uF0D8': '➢', '\uF0FC': '✓', '\uF076': '❖', '\uF06E': '■', '\uF0A2': '⬥', '\uF0BE': '➔', '\uF0E0': '➔', '\uF0AC': '◆', '\uF06C': '●', '\uF0B2': '□' };
+  const LVL_GLYPH = ['•', '◦', '▪', '•', '◦', '▪', '•', '◦', '▪'];
+  function cleanGlyph(g, lvl) {
+    g = cleanText(g).trim();
+    if (!g) return '•';
+    if (/^[\uE000-\uF8FF]$/.test(g)) return PUA_GLYPH[g] || LVL_GLYPH[lvl || 0];
+    return g.replace(/[\uE000-\uF8FF]/g, '');
+  }
   function richFromEls(els) {
     const paras = []; let cur = null;
     const colorOf = (fc) => {
@@ -489,12 +512,13 @@
     for (const el of els || []) {
       if (el.paragraphMarker) {
         const b = el.paragraphMarker.bullet;
-        cur = { g: b ? (b.glyph || '•') : null, lvl: (b && b.nestingLevel) || 0, runs: [] }; paras.push(cur); continue;
+        const lvl = (b && b.nestingLevel) || 0;
+        cur = { g: b ? cleanGlyph(b.glyph, lvl) : null, lvl, runs: [] }; paras.push(cur); continue;
       }
       const tr = el.textRun || el.autoText; if (!tr) continue;
       if (!cur) { cur = { g: null, lvl: 0, runs: [] }; paras.push(cur); }
       const st = tr.style || {};
-      cur.runs.push({ t: tr.content || '', pt: st.fontSize && st.fontSize.magnitude || null, b: !!st.bold, i: !!st.italic, u: !!st.underline, s: !!st.strikethrough, c: colorOf(st.foregroundColor) });
+      cur.runs.push({ t: cleanText(tr.content), pt: st.fontSize && st.fontSize.magnitude || null, b: !!st.bold, i: !!st.italic, u: !!st.underline, s: !!st.strikethrough, c: colorOf(st.foregroundColor) });
     }
     for (const p of paras) { const last = p.runs[p.runs.length - 1]; if (last) last.t = last.t.replace(/\n$/, ''); }
     while (paras.length && !paras[paras.length - 1].runs.some(r => r.t.trim())) paras.pop();
@@ -503,10 +527,12 @@
   function renderNotes(cur) {
     $notes.innerHTML = ''; $notes.scrollTop = 0;
     if (!cur) { $notes.textContent = 'End of presentation.'; $notes.classList.add('empty'); return; }
-    const rich = ui.notesFmt ? (cur.rich || (cur.notesEls ? richFromEls(cur.notesEls) : null)) : null;
+    let rich = ui.notesFmt ? (cur.rich || (cur.notesEls ? richFromEls(cur.notesEls) : null)) : null;
+    if (rich && !rich.cleaned) { rich = rich.map(p => ({ ...p, g: p.g == null ? null : cleanGlyph(p.g, p.lvl), runs: p.runs.map(r => ({ ...r, t: cleanText(r.t) })) })); rich.cleaned = true; if (cur.rich) cur.rich = rich; }
     const hasRich = rich && rich.some(p => p.runs.some(r => r.t.trim()));
     if (!hasRich) {
-      $notes.textContent = cur.notes || 'No notes for this slide.'; $notes.classList.toggle('empty', !cur.notes); return;
+      const plain = cleanText(cur.notes).replace(/\s+$/, '');
+      $notes.textContent = plain || 'No notes for this slide.'; $notes.classList.toggle('empty', !plain); return;
     }
     $notes.classList.remove('empty');
     const frag = document.createDocumentFragment();
@@ -573,6 +599,25 @@
 
   /* ---------- Toast ---------- */
   let toastT = null;
+  /* Problems during a show never pop up on screen: they go to a log in Settings and the Slides pill turns red. */
+  const errLog = [];
+  let errDirty = false;
+  function logErr(src, msg) {
+    const at = new Date();
+    const last = errLog[0];
+    if (last && last.src === src && last.msg === msg) { last.n++; last.at = at; }
+    else { errLog.unshift({ src, msg, at, n: 1 }); if (errLog.length > 60) errLog.pop(); }
+    errDirty = true; console.warn(`[${src}] ${msg}`);
+    $pillSlides.classList.add('bad'); $pillSlides.title = 'Google Slides connection — a problem was logged, open Settings (S) to see it';
+    if ($drawer.classList.contains('on')) renderErrLog();
+  }
+  function clearErrFlag() { $pillSlides.classList.remove('bad'); $pillSlides.title = 'Google Slides connection'; }
+  function renderErrLog() {
+    const el = $('errLog'); if (!el) return;
+    if (!errLog.length) { el.innerHTML = '<span style="color:var(--dim)">No problems logged this session.</span>'; return; }
+    const two = (n) => String(n).padStart(2, '0');
+    el.innerHTML = errLog.map(e => `<div><span class="et">${two(e.at.getHours())}:${two(e.at.getMinutes())}:${two(e.at.getSeconds())}</span> <b>${e.src}</b> ${e.msg.replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]))}${e.n > 1 ? ` <span class="en">×${e.n}</span>` : ''}</div>`).join('');
+  }
   function toast(msg, isErr) {
     $toast.textContent = msg; $toast.className = 'on' + (isErr ? ' err' : '');
     clearTimeout(toastT); toastT = setTimeout(() => { $toast.className = ''; }, isErr ? 6000 : 2600);
@@ -695,11 +740,11 @@
     }
     return n;
   }
-  function cachedCount() { let n = 0; for (const s of deck.slides) if (deck.thumbs.get(s.id)?.local) n++; return n; }
+  function cachedCount() { let n = 0; for (const s of deck.slides) { const t = deck.thumbs.get(s.id); if (t?.local && !t.stale) n++; } return n; }
   function updateSlidesPill() {
     if (DEMO) { setPill($pillSlides, $pillSlidesText, 'Demo deck', 'demo'); return; }
     const total = deck.slides.length, have = cachedCount();
-    if (total && have < total && (deck.queue.length || deck.busy)) setPill($pillSlides, $pillSlidesText, `Caching slides ${have}/${total}`, 'busy');
+    if (total && have < total && (deck.queue.length || deck.busy || deck.pumpSoon)) setPill($pillSlides, $pillSlidesText, `Caching slides ${have}/${total}`, 'busy');
     else setPill($pillSlides, $pillSlidesText, `Slides · ${total}`, 'ok');
   }
 
@@ -812,10 +857,9 @@
       if (currentId) { const p = deck.order.findIndex(i => deck.slides[i].id === currentId); if (p >= 0) deck.pos = p; }
       const newKey = DEMO ? null : `${deck.id}|${meta.revisionId || 'norev'}|`;
       if (changed) {
-        for (const t of deck.thumbs.values()) if (t.local && t.url) URL.revokeObjectURL(t.url);
-        deck.thumbs.clear(); deck.queue = [];
+        markThumbsStale();
         if (deck.id) cacheDeletePrefix(deck.id + '|');           // old revision's images are useless now
-        toast('Deck changed in Google Slides — refreshing images');
+        console.info('Deck changed in Google Slides — refreshing images');
       }
       const keyChanged = newKey !== deck.cacheKey; deck.cacheKey = newKey;
       $deckTitle.textContent = deck.title; document.title = deck.title + ' — Presenter View';
@@ -827,7 +871,7 @@
       console.error('deck load failed', err);
       setPill($pillSlides, $pillSlidesText, 'Slides error', '');
       if (!deck.slides.length) { $curSlide.classList.remove('loading'); $curSlide.classList.add('err'); $curSlide.querySelector('.ph span').textContent = 'Could not load deck — ' + err.message + ' (retrying…)'; }
-      toast('Google Slides: ' + err.message, true);
+      logErr('Deck', err.message);
       deckInFlight = false; deckFails++;
       clearTimeout(deckTimer);
       const backoff = Math.min(120_000, 20_000 * Math.pow(2, Math.min(deckFails - 1, 3)));   // 20 s → 40 → 80 → 120 s
@@ -848,7 +892,7 @@
     updateKv();
     if (v < 3 && !deck.slides.some(s => s.notesEls || s.rich)) {
       deck.fmtWarned = true;
-      toast(`Bridge is v${v} — paste the latest Code.gs and Deploy → Manage deployments → New version to get formatted speaker notes`, true);
+      logErr('Bridge', `Bridge is v${v} — paste the latest Code.gs and Deploy → Manage deployments → New version to get formatted speaker notes`);
     }
   }
 
@@ -922,7 +966,8 @@
   }
 
   /* ---------- Thumbnail scheduler: current, next, then outward ---------- */
-  function thumbFresh(id) { const t = deck.thumbs.get(id); return !!t && (t.local || (performance.now() - t.at) < THUMB_TTL); }
+  function thumbFresh(id) { const t = deck.thumbs.get(id); return !!t && !t.stale && (t.local || (performance.now() - t.at) < THUMB_TTL); }
+  function markThumbsStale() { for (const t of deck.thumbs.values()) t.stale = true; deck.queue = []; }   // keep showing old images until new ones land
 
   function scheduleThumbs() {
     const want = [];
@@ -961,13 +1006,13 @@
       }));
       render(true); updateGridThumbs(batch);
     } catch (err) {
-      toast('Thumbnails: ' + err.message, true);
+      logErr('Images', err.message);
       await new Promise(r => setTimeout(r, 6000));
     } finally {
       batch.forEach(id => deck.pending.delete(id));
       deck.busy = false;
       updateSlidesPill();
-      if (deck.queue.length) setTimeout(pumpThumbs, DEMO ? 30 : 400);   // steady one-call-at-a-time pace until the whole deck is stored
+      if (deck.queue.length) { deck.pumpSoon = true; setTimeout(() => { deck.pumpSoon = false; pumpThumbs(); }, DEMO ? 30 : 400); }   // steady one-call-at-a-time pace until the whole deck is stored
     }
   }
 
@@ -1297,7 +1342,7 @@
     else if (lk === 'o') openOutput();
     else if (lk === 'b') toggleBlack();
     else if (lk === 's') openDrawer();
-    else if (lk === 'r') { loadDeck(true); toast('Reloading deck…'); }
+    else if (lk === 'r') { syncDeck(); }
     else if (k === '+' || k === '=') notesSize(+2);
     else if (k === '-' || k === '_') notesSize(-2);
   }
@@ -1321,7 +1366,23 @@
   $('btnTheme').addEventListener('click', toggleTheme);
   $('btnFull').addEventListener('click', toggleFullscreen);
   $('btnOutput').addEventListener('click', openOutput);
-  $('btnRefresh').addEventListener('click', () => { loadDeck(true); toast('Reloading deck…'); });
+  /* Sync: re-read notes/order from Google Slides and re-download every slide image. */
+  let syncing = false;
+  async function syncDeck() {
+    if (syncing || DEMO || !deck.id) { if (DEMO) toast('Demo deck — nothing to sync'); return; }
+    syncing = true; $('btnSync').classList.add('spin'); clearErrFlag(); errDirty = false;
+    setPill($pillSlides, $pillSlidesText, 'Syncing…', 'busy');
+    try {
+      markThumbsStale(); deckFails = 0;
+      await cacheDeletePrefix(deck.id + '|');
+      deck.cacheKey = null;                                   // forces a fresh key + (empty) hydrate in loadDeck
+      clearTimeout(deckTimer); deckInFlight = false;
+      await loadDeck(!!deck.slides.length);
+      render(); buildGrid(); scheduleThumbs(); updateSlidesPill(); updateKv();
+    } finally { syncing = false; $('btnSync').classList.remove('spin'); }
+  }
+  $('btnSync').addEventListener('click', syncDeck);
+  $('btnClearLog').addEventListener('click', () => { errLog.length = 0; errDirty = false; clearErrFlag(); renderErrLog(); });
   $('notesSmaller').addEventListener('click', () => notesSize(-2));
   $('notesLarger').addEventListener('click', () => notesSize(2));
   $('currentCard').addEventListener('dblclick', toggleFullscreen);
@@ -1394,7 +1455,7 @@
   });
   $('demoBtn').addEventListener('click', () => { const p = new URLSearchParams(location.search); p.set('demo', '1'); location.search = p.toString(); });
 
-  function openDrawer() { fillForm('d'); updateKv(); $drawer.classList.add('on'); $scrim.classList.add('on'); }
+  function openDrawer() { fillForm('d'); updateKv(); renderErrLog(); errDirty = false; clearErrFlag(); $drawer.classList.add('on'); $scrim.classList.add('on'); }
   function closeDrawer() { $drawer.classList.remove('on'); $scrim.classList.remove('on'); }
   $('btnSettings').addEventListener('click', openDrawer); $('drawerClose').addEventListener('click', closeDrawer); $scrim.addEventListener('click', closeDrawer);
   $('drawerForm').addEventListener('submit', (e) => {

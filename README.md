@@ -148,6 +148,12 @@ Quick check of the bridge in a browser tab: `…/exec?action=ping&token=YOURTOKE
 - Ontime must allow the connection: default port 4001, firewall open on the Ontime machine.
 - Thumbnail URLs are Google-signed and public for ~30 minutes to anyone holding the URL — normal for the Slides API.
 
+### Square boxes in the speaker notes
+Fixed in 1.4.1. Google Slides stores Shift+Enter as a vertical-tab character (U+000B) and Chrome draws it as a box; the view now turns it into a line break. Wingdings-style bullets from PowerPoint imports are mapped to normal bullets.
+
+### The Slides pill turned red
+Something failed quietly — usually a Google time-out while pulling notes or images. Nothing is shown on screen during a show. Open Settings (`S`) → **Problems this session** to read the log (it also clears the red), then press the ↻ sync button (or `R`) to re-pull notes and re-download every image. The old images stay up until the new ones arrive.
+
 ### Notes show as plain text (no bold / sizes / colours)
 
 Open Settings (`S`) and click **Test bridge & notes formatting**. The report shows the bridge version, whether the Slides API service is enabled, how many slides carry formatting data, and an example styled run — plus the fix for whatever it finds. The info block above it also shows **Bridge vN** and **Notes formatting**. If it says the bridge is v1 or v2, the deployed Apps Script is old: open the script, replace the code with the current `bridge/Code.gs`, then **Deploy → Manage deployments → ✎ → Version: New version → Deploy**. Saving the file is not enough — Apps Script only serves the code that was in the last *deployment*. Reload the presenter view afterwards (a hard refresh, `Ctrl`+`F5`, if you use the hosted copy).
@@ -168,6 +174,7 @@ If you test the ping URL by hand and your token contains `&`, `#`, `%` or `+`, t
 
 ## Version history
 
+- **1.4.1** — show-safe error handling: problems (deck/thumbnail time-outs, bridge version) no longer pop up on screen; they go to a "Problems this session" log in Settings and the Slides pill quietly turns red until you open Settings. New sync button (↻, left of the Slides pill, or `R`) re-reads notes and slide order from Google Slides and re-downloads every image, while keeping the old images on screen until the new ones arrive. Fixed square boxes in speaker notes: Google Slides stores Shift+Enter as a vertical-tab character (U+000B) that Chrome draws as a box — now rendered as a line break; PowerPoint-import Wingdings bullets are mapped to normal bullets.
 - **1.4.0** — whole-deck local slide cache. On load the presenter downloads every slide image once, starting at the current slide and running forward to the end, then backwards to slide 1, and stores the bytes in the browser's IndexedDB keyed by deck + revision. Reopening the presenter for the same deck restores the images from disk without contacting Google; editing the deck (new revision) invalidates and re-downloads. Header pill shows "Caching slides n/N" while it works; Settings shows cache size and a "Clear slide cache & re-download" button.
 - **1.3.3** — transient Google front-door errors (HTTP 404/429/5xx "Sorry" pages) are retried twice before being reported; thumbnails are fetched 6 per call and trickle after the first two batches so the bridge is never hammered; Test report pings three times, counts recent bridge calls, and continues to the deck test even if the ping fails.
 - **1.3.2** — Test report recognises the unauthorized-script case (HTTP 404 on a correct token) and says exactly what to click; bridge ping answers even before authorization and reports `authorized`.
