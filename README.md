@@ -144,8 +144,13 @@ Quick check of the bridge in a browser tab: `…/exec?action=ping&token=YOURTOKE
 - Ontime must allow the connection: default port 4001, firewall open on the Ontime machine.
 - Thumbnail URLs are Google-signed and public for ~30 minutes to anyone holding the URL — normal for the Slides API.
 
+### Notes show as plain text (no bold / sizes / colours)
+
+Open Settings (`S`). The info block at the bottom shows **Bridge vN** and **Notes formatting**. If it says the bridge is v1 or v2, the deployed Apps Script is old: open the script, replace the code with the current `bridge/Code.gs`, then **Deploy → Manage deployments → ✎ → Version: New version → Deploy**. Saving the file is not enough — Apps Script only serves the code that was in the last *deployment*. Reload the presenter view afterwards (a hard refresh, `Ctrl`+`F5`, if you use the hosted copy).
+
 ## Version history
 
+- **1.2.1** — Settings shows bridge version and whether formatted notes arrived; warns when the bridge is older than v3.
 - **1.2** — speaker notes keep Google Slides formatting (sizes, bold/italic, bullets, colours); A−/A+ scale proportionally. Bridge v3 (redeploy a new version to get formatted notes).
 
 - **1.1** — speaker notes moved to the full right half; bridge v2 reads the whole deck in one Slides API call (fixes timeouts on big decks); clearer on-screen errors with auto-retry.
